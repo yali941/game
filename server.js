@@ -5,19 +5,26 @@ import { fileURLToPath } from 'node:url';
 import { networkInterfaces } from 'node:os';
 import { resolve } from 'node:path';
 import { newGame, playMove, resign, undoMove, agreeDraw } from './public/game.js';
+import { createTableService } from './tables.js';
+import { createRecords } from './records.js';
 
 const publicDir = new URL('./public/', import.meta.url);
 const TYPES = { '/': ['index.html', 'text/html; charset=utf-8'], '/style.css': ['style.css', 'text/css; charset=utf-8'], '/app.js': ['app.js', 'text/javascript; charset=utf-8'], '/game.js': ['game.js', 'text/javascript; charset=utf-8'], '/favicon.svg': ['favicon.svg', 'image/svg+xml'] };
+for (const file of ['hall.html', 'table.html', 'table.css', 'table-app.js', 'table-rules.js', 'profile.js']) TYPES[`/${file}`] = [file, file.endsWith('.js') ? 'text/javascript; charset=utf-8' : file.endsWith('.css') ? 'text/css; charset=utf-8' : 'text/html; charset=utf-8'];
+TYPES['/gomoku'] = TYPES['/']; TYPES['/play'] = TYPES['/table.html'];
 const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const code = () => Array.from(randomBytes(6), b => ALPHABET[b % ALPHABET.length]).join('');
 const seat = color => ({ color, token: randomBytes(32).toString('hex'), streams: new Set(), gone: false, nextReactionAt: 0 });
 
-export function createGameServer() {
+export function createGameServer(options = {}) {
   const rooms = new Map(), rates = new Map();
+  const records = createRecords(options);
+  const tables = createTableService({ ...options, records });
   const connected = p => Boolean(p && !p.gone && p.streams.size);
   const snapshot = (room, player) => ({ code: room.code, yourColor: player?.color, game: room.game, round: room.round, closed: room.closed, ready: room.ready, request: room.request, notice: room.notice, players: room.players.map(p => p ? { color: p.color, connected: connected(p), gone: p.gone } : null) });
   function notifyRoom(room, text) { room.notice = { id: randomBytes(8).toString('hex'), text }; }
   function broadcast(room) {
+    records.victory(room, 'gomoku', p => p.color);
     room.updatedAt = Date.now();
     for (const player of room.players) if (player) for (const stream of player.streams) stream.write(`data: ${JSON.stringify(snapshot(room, player))}\n\n`);
   }
@@ -40,11 +47,13 @@ export function createGameServer() {
     try {
       const url = new URL(req.url, 'http://localhost');
       if (req.headers.origin && new URL(req.headers.origin).host !== req.headers.host) return json(res, 403, { error: '不允许跨站请求' });
+      if (req.method === 'GET' && url.pathname === '/api/rankings') return json(res, 200, records.board(url.searchParams.get('kind'), req));
       if (req.method === 'GET' && TYPES[url.pathname]) {
-        const [file, type] = TYPES[url.pathname];
+        const [file, type] = url.pathname === '/' && !url.searchParams.has('room') ? TYPES['/hall.html'] : TYPES[url.pathname];
         res.writeHead(200, { 'Content-Type': type, 'Cache-Control': 'no-cache' });
         return res.end(await readFile(new URL(file, publicDir)));
       }
+      if (req.method === 'GET' && url.pathname.startsWith('/api/table/')) return await tables.handle(req, res, url);
       if (req.method === 'GET' && url.pathname === '/api/events') {
         const room = rooms.get(url.searchParams.get('room'));
         const player = room?.players.find(p => p?.token === url.searchParams.get('token') && !p.gone);
@@ -65,10 +74,14 @@ export function createGameServer() {
       if (!rate || now - rate.start > 60000) rates.set(ip, { start: now, count: 1 });
       else if (++rate.count > 180) return json(res, 429, { error: '操作太频繁，请稍后重试' });
       const data = await body(req);
+      if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('请求格式错误');
+      if (url.pathname === '/api/profile') return json(res, 200, records.profile(req, data));
+      if (url.pathname.startsWith('/api/table/')) return await tables.handle(req, res, url, data);
       if (url.pathname === '/api/create') {
         if (rooms.size >= 500) throw new Error('房间暂时已满，请稍后再试');
         let id; do { id = code(); } while (rooms.has(id));
         const player = seat(1);
+        player.profileId = records.lookup(req)?.id;
         const room = { code: id, players: [player, null], game: newGame(), round: 1, ready: [], request: null, notice: null, closed: false, updatedAt: now };
         rooms.set(id, room);
         return json(res, 200, { token: player.token, ...snapshot(room, player) });
@@ -78,7 +91,7 @@ export function createGameServer() {
       if (url.pathname === '/api/join') {
         if (room.closed) throw new Error('房间已关闭，请创建新房间');
         if (room.players[1]) throw new Error('房间已满，两位棋手已入座');
-        const player = seat(2); room.players[1] = player;
+        const player = seat(2); player.profileId = records.lookup(req)?.id; room.players[1] = player;
         broadcast(room);
         return json(res, 200, { token: player.token, ...snapshot(room, player) });
       }
@@ -149,13 +162,14 @@ export function createGameServer() {
     }
   });
   const cleanup = setInterval(() => {
+    tables.cleanup();
     const now = Date.now();
     for (const [id, room] of rooms) if (!room.players.some(connected) && now - room.updatedAt > 86400000) rooms.delete(id);
     for (const [ip, rate] of rates) if (now - rate.start > 60000) rates.delete(ip);
   }, 60000);
   cleanup.unref();
   server.on('close', () => clearInterval(cleanup));
-  return { server, rooms };
+  return { server, rooms, tableRooms: tables.rooms };
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
