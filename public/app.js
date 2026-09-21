@@ -1,10 +1,12 @@
 import { SIZE, newGame, playMove, resign, undoMove, agreeDraw } from './game.js';
+import { profileReady, profileHeaders, refreshRankings } from './profile.js';
 
 const $ = id => document.getElementById(id);
 const svgNS = 'http://www.w3.org/2000/svg';
 let mode = 'online', room = null, session = null, localGame = newGame(), stream = null;
 let transport = false, pending = false, sound = false, audioContext, toastTimer, hover = null;
 let lastMoveCount = 0, confirmAction = null;
+let renderedStoneKey = '', lastRankedGame = '';
 let lastNoticeId = null, nextReactionAt = 0, reactionTimer, feedbackTimer;
 const reactions = { poop: { emoji: '💩', label: '扔了一个大便', impact: '💩' }, heart: { emoji: '❤️', label: '送来一颗爱心', impact: '💕' }, bomb: { emoji: '💣', label: '扔了一颗炸弹', impact: '💥' } };
 const cells = [], labels = 'ABCDEFGHJKLMNOP';
@@ -41,7 +43,7 @@ function soundMove() {
   } catch { /* Audio is optional. */ }
 }
 async function api(action, data = {}) {
-  const response = await fetch(`/api/${action}`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(session ? { Authorization: `Bearer ${session.token}` } : {}) }, body: JSON.stringify({ room: session?.room, ...data }), signal: AbortSignal.timeout(10000) });
+  const response = await fetch(`/api/${action}`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...profileHeaders(), ...(session ? { Authorization: `Bearer ${session.token}` } : {}) }, body: JSON.stringify({ room: session?.room, ...data }), signal: AbortSignal.timeout(10000) });
   const value = await response.json();
   if (!response.ok) { const error = new Error(value.error || '操作失败，请重试'); error.status = response.status; throw error; }
   return value;
@@ -58,6 +60,7 @@ function applyRoom(next, silent = false) {
   if (!silent && next.notice && next.notice.id !== lastNoticeId) toast(next.notice.text);
   lastNoticeId = next.notice?.id || null;
   lastMoveCount = next.game.moves.length; room = next; render();
+  if (next.game.status === 'finished' && lastRankedGame !== `${next.code}-${next.round}`) { lastRankedGame = `${next.code}-${next.round}`; refreshRankings(); }
 }
 function connect() {
   stream?.close(); transport = false;
@@ -174,16 +177,23 @@ function renderHover() {
   $('hover').append(element('circle', { cx: 40 + x * 40, cy: 40 + y * 40, r: 16.5, fill: game().turn === 1 ? '#27362b' : '#fff', stroke: '#8e9b82', class: 'hover-stone' }));
 }
 function renderBoard() {
-  const g = game(), stones = $('stones'); stones.replaceChildren();
+  const g = game(), stones = $('stones');
+  const stoneKey = JSON.stringify([g.board, g.line, g.moves.at(-1)]);
+  const redraw = stoneKey !== renderedStoneKey;
+  if (redraw) { stones.replaceChildren(); renderedStoneKey = stoneKey; }
+  const last = g.moves.at(-1);
+  const pulseLine = [...g.line].sort((a, b) => Math.max(Math.abs(a[0] - last.x), Math.abs(a[1] - last.y)) - Math.max(Math.abs(b[0] - last.x), Math.abs(b[1] - last.y)));
   g.board.forEach((color, index) => {
     const x = index % SIZE, y = Math.floor(index / SIZE);
     cells[index].setAttribute('aria-label', `${labels[x]}${15 - y}，${color ? color === 1 ? '黑棋' : '白棋' : '空位'}`);
     cells[index].setAttribute('aria-disabled', String(Boolean(color) || !canPlay()));
-    if (color) stones.append(element('circle', { cx: 40 + x * 40, cy: 40 + y * 40, r: 16.5, fill: `url(#${color === 1 ? 'black' : 'white'}-stone)`, stroke: color === 2 ? '#d9ddcf' : '#252e26', 'stroke-width': '.7', class: 'game-stone' }));
+    if (color && redraw) {
+      const order = pulseLine.findIndex(p => p[0] === x && p[1] === y);
+      stones.append(element('circle', { cx: 40 + x * 40, cy: 40 + y * 40, r: 16.5, fill: `url(#${color === 1 ? 'black' : 'white'}-stone)`, stroke: color === 2 ? '#d9ddcf' : '#252e26', 'stroke-width': '.7', class: `game-stone${order >= 0 ? ' winning-stone' : ''}`, ...(order >= 0 ? { 'data-pulse-order': order } : {}) }));
+    }
   });
-  for (const [x, y] of g.line) stones.append(element('circle', { cx: 40 + x * 40, cy: 40 + y * 40, r: 19.5, class: 'win-ring' }));
-  const last = g.moves.at(-1);
-  if (last) stones.append(element('circle', { cx: 40 + last.x * 40, cy: 40 + last.y * 40, r: 3, class: 'last-point' }));
+  if (redraw) for (const [x, y] of g.line) stones.append(element('circle', { cx: 40 + x * 40, cy: 40 + y * 40, r: 19.5, class: 'win-ring' }));
+  if (last && redraw) stones.append(element('circle', { cx: 40 + last.x * 40, cy: 40 + last.y * 40, r: 3, class: 'last-point' }));
   $('board').classList.toggle('playable', canPlay());
   $('move-counter').replaceChildren(document.createTextNode('第 '), Object.assign(document.createElement('b'), { textContent: String(g.moves.length).padStart(2, '0') }), document.createTextNode(' 手'));
   $('coordinate').textContent = last ? `最近落子 ${labels[last.x]}${15 - last.y}` : '黑先 · 白后';
@@ -275,8 +285,8 @@ function switchMode(next) {
   else change();
 }
 
-$('create-button').addEventListener('click', () => action(async () => enter(await api('create'))));
-$('join-form').addEventListener('submit', event => { event.preventDefault(); const code = $('room-input').value.trim().toUpperCase(); if (!/^[A-Z2-9]{6}$/.test(code)) return toast('请输入 6 位房间码。'); action(async () => enter(await api('join', { room: code }))); });
+$('create-button').addEventListener('click', () => action(async () => { await profileReady; enter(await api('create')); }));
+$('join-form').addEventListener('submit', event => { event.preventDefault(); const code = $('room-input').value.trim().toUpperCase(); if (!/^[A-Z2-9]{6}$/.test(code)) return toast('请输入 6 位房间码。'); action(async () => { await profileReady; enter(await api('join', { room: code })); }); });
 $('room-input').addEventListener('input', () => { $('room-input').value = $('room-input').value.replace(/[^a-zA-Z2-9]/g, '').toUpperCase(); });
 $('online-tab').addEventListener('click', () => switchMode('online'));
 $('local-tab').addEventListener('click', () => switchMode('local'));
@@ -287,6 +297,7 @@ $('request-reject').addEventListener('click', () => respondToRequest(false));
 $('request-cancel').addEventListener('click', () => { const request = room?.request; if (request) action(async () => { await api('cancel-request', { id: request.id }); }); });
 document.querySelectorAll('[data-reaction]').forEach(button => button.addEventListener('click', () => sendReaction(button.dataset.reaction)));
 $('rules-button').addEventListener('click', () => $('rules-dialog').showModal());
+$('hall-link').addEventListener('click', event => { if (room) { event.preventDefault(); confirm('离开棋室，返回大厅？', '当前房间会关闭，进行中的对局将判对方获胜。', () => action(async () => { await leaveRoom(); location.href = '/'; }), '返回大厅'); } });
 document.querySelectorAll('.dialog-close').forEach(button => button.addEventListener('click', () => button.closest('dialog').close()));
 $('confirm-cancel').addEventListener('click', () => $('confirm-dialog').close());
 $('confirm-ok').addEventListener('click', () => { $('confirm-dialog').close(); const fn = confirmAction; confirmAction = null; fn?.(); });
@@ -308,7 +319,7 @@ $('leave-button').addEventListener('click', () => {
 });
 $('rematch-button').addEventListener('click', () => action(async () => { if (mode === 'local') localGame = newGame(); else await api('rematch'); }));
 
-setupBoard(); render();
+setupBoard(); render(); await profileReady;
 try { const stored = JSON.parse(sessionStorage.getItem('yiju-session') || 'null'); if (stored?.room && stored?.token) session = stored; } catch { /* Start a fresh session. */ }
 const invitation = new URLSearchParams(location.search).get('room')?.toUpperCase();
 if (session) {

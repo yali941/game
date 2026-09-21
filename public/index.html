@@ -6,7 +6,7 @@
   <title>一局 · 五子棋</title><link rel="icon" href="/favicon.svg"><link rel="stylesheet" href="/style.css"><script type="module" src="/app.js"></script>
 </head>
 <body>
-  <header class="header"><a class="brand" href="/" aria-label="一局首页"><span class="brand-mark"><i></i><i></i></span><span>一局<span class="brand-dot">.</span></span><small>GOMOKU</small></a><button class="text-button" id="rules-button"><span class="help-icon">?</span> 玩法说明</button></header>
+  <header class="header"><a class="brand" href="/" aria-label="一局首页"><span class="brand-mark"><i></i><i></i></span><span>一局<span class="brand-dot">.</span></span><small>GOMOKU</small></a><div class="header-actions"><a id="hall-link" href="/">← 游戏大厅</a><button class="text-button" id="rules-button"><span class="help-icon">?</span> 玩法说明</button></div></header>
   <main>
     <section class="intro"><div><p class="eyebrow">A LITTLE PAUSE. A GOOD GAME.</p><h1>落一子，慢下来<span>。</span></h1><p class="subtitle">黑白之间，与朋友好好下一局。</p></div><div class="intro-note"><span class="infinity">∞</span><div>落子不限时<small>留一点时间，给思考。</small></div></div></section>
     <div class="game-layout">
@@ -23,7 +23,7 @@
   <div id="request-panel" class="request-panel" hidden><strong id="request-title"></strong><p id="request-detail"></p><div class="request-actions"><button id="request-accept" class="primary-button">同意</button><button id="request-reject" class="secondary-button">拒绝</button><button id="request-cancel" class="secondary-button">取消请求</button></div></div>
   <div id="negotiation-buttons" class="negotiation-buttons"><button id="undo-button" class="secondary-button">↶ 悔棋</button><button id="draw-button" class="secondary-button">＝ 求和</button></div><button id="rematch-button" class="primary-button" hidden>再来一局 <span>↻</span></button><div class="action-row"><button id="resign-button" class="text-button">认输</button><button id="leave-button" class="text-button">离开房间 ↗</button></div></div></section>
         <section id="reactions-panel" class="panel reactions-panel" hidden><div class="section-number">03 / 和对手打个招呼</div><div class="reaction-buttons"><button data-reaction="poop" aria-label="给对手扔大便"><span aria-hidden="true">💩</span>扔大便</button><button data-reaction="heart" aria-label="给对手送爱心"><span aria-hidden="true">❤️</span>送爱心</button><button data-reaction="bomb" aria-label="给对手扔炸弹"><span aria-hidden="true">💣</span>扔炸弹</button></div><p id="reaction-feedback" aria-live="polite">小小互动，不影响棋局</p></section>
-        <div class="quiet-note"><span class="mini-grid">✳</span><p>不赶时间，只管落子。<br><span>五子连珠，便是一局好棋。</span></p></div>
+        <section class="panel ranking-panel" data-rank-kind="gomoku"><div class="section-number">04 / 联机胜场榜</div><div class="nickname-row"><input id="nickname" aria-label="玩家昵称" maxlength="24" placeholder="你的昵称"><button id="save-nickname">保存</button></div><p id="my-wins" class="small-note">正在读取战绩…</p><ol id="rank-list" class="rank-list"></ol><p id="rank-status" class="small-note" aria-live="polite"></p><p class="rank-footnote">仅统计有落子的联机胜局，同屏不计。此免费服务器重启或更新后，战绩可能重置。</p></section><div class="quiet-note"><span class="mini-grid">✳</span><p>不赶时间，只管落子。<br><span>五子连珠，便是一局好棋。</span></p></div>
       </aside>
     </div>
     <footer><span>一局 · 把时间留在棋盘上</span><span>黑棋先行 <i>·</i> 五子连珠 <i>·</i> 不限时</span></footer>
