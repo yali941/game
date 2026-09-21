@@ -40,3 +40,20 @@ export function resign(game, color) {
   if (color !== 1 && color !== 2) throw new Error('无效的执棋方');
   game.status = 'finished'; game.winner = 3 - color; game.reason = 'resign';
 }
+
+// Return to just before the requesting player's most recent move. If the
+// opponent has already replied, both moves are removed so the requester moves.
+export function undoMove(game, color) {
+  if (game.status !== 'playing') throw new Error('本局已结束，不能悔棋');
+  const index = game.moves.findLastIndex(move => move.color === color);
+  if (index < 0) throw new Error('你还没有落子，暂时不能悔棋');
+  const removed = game.moves.splice(index);
+  for (const move of removed) game.board[move.y * SIZE + move.x] = 0;
+  game.turn = color; game.winner = 0; game.line = []; game.reason = '';
+  return removed.length;
+}
+
+export function agreeDraw(game) {
+  if (game.status !== 'playing') throw new Error('本局已结束');
+  game.status = 'finished'; game.winner = 0; game.line = []; game.reason = 'agreement';
+}

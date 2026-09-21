@@ -1,15 +1,17 @@
-import { SIZE, newGame, playMove, resign } from './game.js';
+import { SIZE, newGame, playMove, resign, undoMove, agreeDraw } from './game.js';
 
 const $ = id => document.getElementById(id);
 const svgNS = 'http://www.w3.org/2000/svg';
 let mode = 'online', room = null, session = null, localGame = newGame(), stream = null;
 let transport = false, pending = false, sound = false, audioContext, toastTimer, hover = null;
 let lastMoveCount = 0, confirmAction = null;
+let lastNoticeId = null, nextReactionAt = 0, reactionTimer, feedbackTimer;
+const reactions = { poop: { emoji: '💩', label: '扔了一个大便', impact: '💩' }, heart: { emoji: '❤️', label: '送来一颗爱心', impact: '💕' }, bomb: { emoji: '💣', label: '扔了一颗炸弹', impact: '💥' } };
 const cells = [], labels = 'ABCDEFGHJKLMNOP';
 const game = () => mode === 'local' ? localGame : room?.game || newGame();
 const myColor = () => mode === 'local' ? localGame.turn : room?.yourColor;
 const bothOnline = () => room?.players.every(p => p?.connected && !p.gone);
-const canPlay = () => !pending && game().status === 'playing' && (mode === 'local' || (transport && room && !room.closed && bothOnline() && game().turn === myColor()));
+const canPlay = () => !pending && game().status === 'playing' && (mode === 'local' || (transport && room && !room.closed && !room.request && bothOnline() && game().turn === myColor()));
 
 function element(tag, attrs = {}, text = '') {
   const el = document.createElementNS(svgNS, tag);
@@ -53,6 +55,8 @@ async function action(fn) {
 }
 function applyRoom(next, silent = false) {
   if (!silent && next.game.moves.length > lastMoveCount) soundMove();
+  if (!silent && next.notice && next.notice.id !== lastNoticeId) toast(next.notice.text);
+  lastNoticeId = next.notice?.id || null;
   lastMoveCount = next.game.moves.length; room = next; render();
 }
 function connect() {
@@ -60,6 +64,7 @@ function connect() {
   const activeSession = session;
   stream = new EventSource(`/api/events?room=${encodeURIComponent(session.room)}&token=${encodeURIComponent(session.token)}`);
   stream.onmessage = event => { if (session !== activeSession) return; transport = true; applyRoom(JSON.parse(event.data)); };
+  stream.addEventListener('reaction', event => { if (session === activeSession && mode === 'online') showReaction(JSON.parse(event.data)); });
   stream.onerror = async () => {
     if (session !== activeSession) return;
     transport = false; render();
@@ -75,7 +80,50 @@ function enter(value) {
 }
 function clearRoom() {
   stream?.close(); stream = null; session = null; room = null; transport = false; lastMoveCount = 0;
+  lastNoticeId = null; resetReactions();
   persist(); history.replaceState(null, '', location.pathname);
+}
+
+function resetReactions() {
+  clearTimeout(reactionTimer); clearTimeout(feedbackTimer); nextReactionAt = 0;
+  $('reaction-stage').replaceChildren(); $('reaction-feedback').textContent = '小小互动，不影响棋局';
+}
+function showReaction(reaction) {
+  const effect = reactions[reaction.kind];
+  if (!effect || ![1, 2].includes(reaction.from)) return;
+  const stage = $('reaction-stage');
+  const batch = document.createElement('div');
+  batch.className = `reaction-batch from-${reaction.from === 1 ? 'black' : 'white'} kind-${reaction.kind}`;
+  const flight = document.createElement('span'); flight.className = 'reaction-flight'; flight.textContent = effect.emoji;
+  const impact = document.createElement('span'); impact.className = 'reaction-impact'; impact.textContent = effect.impact;
+  const caption = document.createElement('span'); caption.className = 'reaction-caption';
+  caption.textContent = `${reaction.from === 1 ? '黑棋 → 白棋' : '白棋 → 黑棋'} ${effect.emoji}`;
+  batch.append(flight, impact, caption); stage.append(batch);
+  while (stage.children.length > 4) stage.firstElementChild.remove();
+  setTimeout(() => batch.remove(), 2200);
+  const sender = mode === 'local' ? reaction.from === 1 ? '黑棋' : '白棋' : reaction.from === myColor() ? '你' : '对手';
+  $('reaction-feedback').textContent = `${sender}${effect.label} ${effect.emoji}`;
+  clearTimeout(feedbackTimer);
+  feedbackTimer = setTimeout(() => { $('reaction-feedback').textContent = '小小互动，不影响棋局'; }, 6000);
+}
+function requestAction(kind) {
+  if (mode === 'local') {
+    if (kind === 'undo') confirm('双方同意悔棋？', '撤回最近一手，由刚才落子的一方重新落子。', () => { undoMove(localGame, localGame.moves.at(-1).color); render(); }, '同意悔棋');
+    else confirm('双方同意和棋？', '确认后本局以和棋结束，可以再来一局。', () => { agreeDraw(localGame); render(); }, '同意和棋');
+  } else action(async () => { await api('request', { kind }); });
+}
+function respondToRequest(accept) {
+  const request = room?.request;
+  if (request) action(async () => { await api('respond', { id: request.id, accept }); });
+}
+function sendReaction(kind) {
+  if (pending || Date.now() < nextReactionAt) return;
+  action(async () => {
+    if (mode === 'local') showReaction({ kind, from: localGame.turn });
+    else await api('reaction', { kind });
+    nextReactionAt = Date.now() + 2000;
+    clearTimeout(reactionTimer); reactionTimer = setTimeout(render, 2050);
+  });
 }
 async function leaveRoom() {
   if (session) await api('leave');
@@ -89,8 +137,8 @@ function setupBoard() {
     const gradient = element('radialGradient', { id, cx: '32%', cy: '25%', r: '75%' });
     gradient.append(element('stop', { offset: '0%', 'stop-color': light }), element('stop', { offset: '100%', 'stop-color': dark })); defs.append(gradient);
   }
-  const filter = element('filter', { id: 'stone-shadow', x: '-30%', y: '-30%', width: '160%', height: '180%' });
-  filter.append(element('feDropShadow', { dx: '0', dy: '2', stdDeviation: '1.5', 'flood-color': '#273123', 'flood-opacity': '.22' })); defs.append(filter); board.append(defs);
+  const filter = element('filter', { id: 'stone-shadow', x: '-50%', y: '-50%', width: '200%', height: '220%', 'color-interpolation-filters': 'sRGB' });
+  filter.append(element('feDropShadow', { dx: '1.5', dy: '3.5', stdDeviation: '2.3', 'flood-color': '#263021', 'flood-opacity': '.32' })); defs.append(filter); board.append(defs);
   for (let n = 0; n < SIZE; n++) {
     const pos = 40 + n * 40;
     board.append(element('line', { x1: 40, y1: pos, x2: 600, y2: pos, class: n === 0 || n === 14 ? 'grid-edge' : 'grid-line' }), element('line', { x1: pos, y1: 40, x2: pos, y2: 600, class: n === 0 || n === 14 ? 'grid-edge' : 'grid-line' }));
@@ -161,6 +209,7 @@ function render() {
     if (g.status === 'finished') {
       title = g.winner ? `${g.winner === 1 ? '黑棋' : '白棋'}获胜${!local && g.winner === myColor() ? ' · 好棋！' : ''}` : '和棋 · 旗鼓相当';
       detail = g.reason === 'resign' ? `${g.winner === 1 ? '白棋' : '黑棋'}认输，本局结束。` : g.reason === 'leave' ? '一方离开了棋室，本局结束。' : g.reason === 'draw' ? '棋盘已满，不妨再来一局。' : '五子连珠，胜负已定。';
+      if (g.reason === 'agreement') detail = '双方同意和棋，握手言和。';
       if (!local && g.reason === 'resign') detail = g.winner === myColor() ? '对手认输，本局结束。' : '你已认输，再来一局吧。';
       if (!local && room.ready.length) detail = room.ready.includes(myColor()) ? '你已准备，等待对手再来一局。' : '对手想再来一局，轮到你确认了。';
       symbol = g.winner ? '✳' : '＝';
@@ -168,6 +217,10 @@ function render() {
     else if (!local && !transport) { title = '正在重新连接…'; detail = '棋局已保留，连接恢复后继续。'; }
     else if (!local && !room.players[1]) { title = '等一位朋友入座'; detail = '分享邀请链接，朋友加入即可开局。'; }
     else if (!local && !bothOnline()) { title = '对手暂时离线'; detail = '棋局已保留，等朋友回来再继续。'; }
+    else if (!local && room.request) {
+      title = room.request.from === myColor() ? '等待对手回应' : room.request.kind === 'undo' ? '对手申请悔棋' : '对手向你求和';
+      detail = '请求处理后继续，双方仍然不限时。'; symbol = '⇄';
+    }
     else {
       title = local ? `轮到${g.turn === 1 ? '黑棋' : '白棋'}落子` : g.turn === myColor() ? '轮到你落子' : '等对手落子';
       detail = '没有倒计时，慢慢想就好。'; symbol = g.turn === 1 ? '●' : '○';
@@ -182,6 +235,23 @@ function render() {
     $(`${key}-player`).classList.toggle('active', seated && g.status === 'playing' && g.turn === color && (local || (transport && bothOnline())));
   }
   $('game-actions').hidden = !seated;
+  const readyForAction = seated && !pending && (local || (transport && bothOnline() && !room.closed));
+  const request = local ? null : room?.request;
+  const ownRequest = request?.from === myColor();
+  $('negotiation-buttons').hidden = !seated || g.status !== 'playing' || Boolean(room?.closed);
+  $('undo-button').disabled = !readyForAction || Boolean(request) || !(local ? g.moves.length : g.moves.some(move => move.color === myColor()));
+  $('draw-button').disabled = !readyForAction || Boolean(request);
+  $('request-panel').hidden = !request;
+  if (request) {
+    const name = request.kind === 'undo' ? '悔棋' : '求和';
+    $('request-title').textContent = ownRequest ? `已发送${name}请求` : `对手申请${name}`;
+    $('request-detail').textContent = request.kind === 'undo' ? `同意后撤回${g.moves.at(-1)?.color === request.from ? '最近一手' : '双方最近各一手'}，由${request.from === 1 ? '黑棋' : '白棋'}重下。` : '同意后以和棋结束本局。';
+    $('request-accept').hidden = ownRequest; $('request-reject').hidden = ownRequest; $('request-cancel').hidden = !ownRequest;
+    $('request-accept').disabled = !readyForAction; $('request-reject').disabled = !readyForAction;
+    $('request-cancel').disabled = pending || !transport;
+  }
+  $('reactions-panel').hidden = !seated;
+  for (const button of document.querySelectorAll('[data-reaction]')) button.disabled = !readyForAction || Date.now() < nextReactionAt;
   $('resign-button').disabled = pending || g.status !== 'playing' || (!local && (!transport || !bothOnline() || room.closed));
   $('resign-button').hidden = g.status === 'finished' || Boolean(room?.closed);
   $('leave-button').textContent = local ? '重新开局 ↻' : '离开房间 ↗'; $('leave-button').disabled = pending;
@@ -200,7 +270,7 @@ function move(x, y) {
 }
 function switchMode(next) {
   if (mode === next || pending) return;
-  const change = () => action(async () => { if (session) await leaveRoom(); mode = next; render(); });
+  const change = () => action(async () => { if (session) await leaveRoom(); resetReactions(); mode = next; render(); });
   if (room) confirm('离开这间棋室？', '切换模式会关闭当前房间。进行中的对局将判对方获胜。', change, '离开并切换');
   else change();
 }
@@ -210,6 +280,12 @@ $('join-form').addEventListener('submit', event => { event.preventDefault(); con
 $('room-input').addEventListener('input', () => { $('room-input').value = $('room-input').value.replace(/[^a-zA-Z2-9]/g, '').toUpperCase(); });
 $('online-tab').addEventListener('click', () => switchMode('online'));
 $('local-tab').addEventListener('click', () => switchMode('local'));
+$('undo-button').addEventListener('click', () => requestAction('undo'));
+$('draw-button').addEventListener('click', () => requestAction('draw'));
+$('request-accept').addEventListener('click', () => respondToRequest(true));
+$('request-reject').addEventListener('click', () => respondToRequest(false));
+$('request-cancel').addEventListener('click', () => { const request = room?.request; if (request) action(async () => { await api('cancel-request', { id: request.id }); }); });
+document.querySelectorAll('[data-reaction]').forEach(button => button.addEventListener('click', () => sendReaction(button.dataset.reaction)));
 $('rules-button').addEventListener('click', () => $('rules-dialog').showModal());
 document.querySelectorAll('.dialog-close').forEach(button => button.addEventListener('click', () => button.closest('dialog').close()));
 $('confirm-cancel').addEventListener('click', () => $('confirm-dialog').close());
