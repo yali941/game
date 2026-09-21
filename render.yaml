@@ -1,0 +1,11 @@
+# Deploy this repository through Render > New > Blueprint.
+# Explicitly use the free compute plan; no database or paid disk is created.
+services:
+  - type: web
+    name: yiju-gomoku
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /
+    autoDeployTrigger: "off"

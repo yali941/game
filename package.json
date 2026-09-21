@@ -1,0 +1,9 @@
+{
+  "name": "yiju-gomoku",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "一局 · 不限时的极简联机五子棋",
+  "scripts": { "start": "node server.js", "test": "node --test" },
+  "engines": { "node": ">=20" }
+}
