@@ -1,20 +1,22 @@
 import { ANIMALS, ANIMAL_ICONS, FLIGHT_COLORS, FLIGHT_PAINTS, newTableGame, jungleTargets, moveJungle, moveFlight, rollFlight, flightOptions, flightIndex, river, denOwner, trapOwner } from './table-rules.js';
 import { profileReady, profileHeaders, refreshRankings } from './profile.js';
+import { flightMotionSteps, sampleFlightLeg } from './flight-path.js';
 
 const $ = id => document.getElementById(id), ns = 'http://www.w3.org/2000/svg';
 const params = new URLSearchParams(location.search), kind = params.get('game') === 'jungle' ? 'jungle' : 'flight';
 const title = kind === 'flight' ? '飞行棋' : '斗兽棋';
 let mode = 'online', room = null, session = null, stream = null, transport = false, pending = false;
 let localGame = newTableGame(kind, 2), selected = null, toastTimer, confirmAction, nextReactionAt = 0, lastRankedRound = '';
+let flightSnapshot = null, flightMotion = null, flightFrame = 0;
 const game = () => mode === 'local' ? localGame : room?.game || localGame;
 const seat = () => mode === 'local' ? game().turn : room?.yourSeat;
 const allOnline = () => room?.players.every(p => p?.connected && !p.gone);
 const seated = () => mode === 'local' || Boolean(room);
-const available = () => !pending && (mode === 'local' || (transport && room?.started && !room.closed && allOnline()));
+const available = () => !pending && !flightMotion && (mode === 'local' || (transport && room?.started && !room.closed && allOnline()));
 const myTurn = () => available() && game().status === 'playing' && game().turn === seat();
 const colorOf = n => kind === 'flight' ? game().colors[n - 1] : n === 1 ? 0 : 2;
 const playerName = n => `${FLIGHT_COLORS[colorOf(n)]}方`;
-const paint = n => FLIGHT_PAINTS[colorOf(n)];
+const paint = n => (kind === 'flight' ? flightPalette : FLIGHT_PAINTS)[colorOf(n)];
 function svg(tag, attrs = {}, text = '') { const el = document.createElementNS(ns, tag); for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v); if (text) el.textContent = text; return el; }
 function toast(text) { $('toast').textContent = text; $('toast').hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => $('toast').hidden = true, 4500); }
 function confirm(text, detail, fn, label = '确定') { $('confirm-title').textContent = text; $('confirm-text').textContent = detail; $('confirm-ok').textContent = label; confirmAction = fn; $('confirm-dialog').showModal(); }
@@ -91,57 +93,167 @@ function renderJungle(board) {
   }
 }
 
-const center = 350, radius = 235;
-const ringPoint = index => { const a = (-90 + index * 360 / 52) * Math.PI / 180; return [center + Math.cos(a) * radius, center + Math.sin(a) * radius]; };
-const lanePoint = (color, progress) => { const r = [220, 201, radius * Math.cos(6 * Math.PI / 26), 137, 95, 48][progress - 51], a = (-90 + color * 90) * Math.PI / 180; return [center + Math.cos(a) * r, center + Math.sin(a) * r]; };
-const airport = color => [[590, 110], [590, 590], [110, 590], [110, 110]][color];
-const launch = color => { const [x, y] = ringPoint(color * 13 + 2); return [center + (x - center) * 1.18, center + (y - center) * 1.18]; };
+// Traditional 17 × 17 layout. Index 0 is the red home entrance at the left.
+// Each clockwise quarter has 13 cells; keep these indices aligned with flightIndex.
+const flightPalette = ['#e60012', '#ffca00', '#007fab', '#009b43'];
+const flightUnit = 36, flightMargin = 44;
+const flightQuarter = [
+  { at: [1, 8.5], rect: [0, 8, 2, 1] },
+  { at: [1, 7.5], rect: [0, 7, 2, 1] },
+  { at: [1, 6.5], rect: [0, 6, 2, 1] },
+  { at: [1.35, 5.35], triangle: [[0, 6], [2, 6], [2, 4]] },
+  { at: [2.5, 5], rect: [2, 4, 1, 2] },
+  { at: [3.5, 5], rect: [3, 4, 1, 2] },
+  { at: [4.5, 5.5], triangle: [[4, 4], [4, 6], [6, 6]] },
+  { at: [5.5, 4.5], triangle: [[4, 4], [6, 4], [6, 6]] },
+  { at: [5, 3.5], rect: [4, 3, 2, 1] },
+  { at: [5, 2.5], rect: [4, 2, 2, 1] },
+  { at: [5.35, 1.35], triangle: [[4, 2], [6, 2], [6, 0]] },
+  { at: [6.5, 1], rect: [6, 0, 1, 2] },
+  { at: [7.5, 1], rect: [7, 0, 1, 2] }
+];
+function quarterTurn([x, y], color) { for (let i = 0; i < color; i++) [x, y] = [17 - y, x]; return [x, y]; }
+const flightPixel = point => point.map(v => flightMargin + v * flightUnit);
+const ringPoint = index => flightPixel(quarterTurn(flightQuarter[index % 13].at, Math.floor(index / 13)));
+const lanePoint = (color, progress) => flightPixel(quarterTurn([2.5 + progress - 51, 8.5], color));
+const airportPoint = (color, number) => flightPixel(quarterTurn([number % 2 ? 1.1 : 2.9, number <= 2 ? 1.1 : 2.9], color));
+const launch = color => flightPixel(quarterTurn([.55, 4.55], color));
 function planePoint(p) {
-  if (p.progress === -1 || p.progress === 56) { const [x, y] = airport(p.color); return [x + (p.number % 2 ? -25 : 25), y + (p.number <= 2 ? -20 : 25)]; }
+  if (p.progress === -1 || p.progress === 56) return airportPoint(p.color, p.number);
   if (p.progress === 0) return launch(p.color);
   if (p.progress >= 51) return lanePoint(p.color, p.progress);
   return ringPoint(flightIndex(p.color, p.progress));
 }
+function flightGlyph(x, y, size, color, angle = 0) {
+  return svg('path', { d: 'M15 0 Q15 -2 10 -2 L3 -3 L-3 -13 L-6 -13 L-4 -3 L-11 -2 L-14 -6 L-16 -6 L-14 0 L-16 6 L-14 6 L-11 2 L-4 3 L-6 13 L-3 13 L3 3 L10 2 Q15 2 15 0Z', fill: flightPalette[color], transform: 'translate(' + x + ' ' + y + ') rotate(' + angle + ') scale(' + size / 32 + ')', 'pointer-events': 'none' });
+}
 function flyPlane(id) { if (!myTurn() || !flightOptions(game(), seat()).includes(id)) return; action(async () => { if (mode === 'local') moveFlight(game(), seat(), id); else apply(await api('move', { id })); }); }
+function syncFlightMotion() {
+  const g = game(), scope = mode === 'local' ? localGame : room ? room.code + ':' + room.round : 'lobby';
+  const before = flightSnapshot;
+  flightSnapshot = { scope, moves: g.moves.length, rolls: g.rolls, planes: g.planes.map(p => ({ ...p })) };
+  if (!before || before.scope !== scope || matchMedia('(prefers-reduced-motion: reduce)').matches) { flightMotion = null; return; }
+  const moved = g.last?.id && g.moves.length === before.moves + 1;
+  const penalty = g.last?.penalty && g.rolls === before.rolls + 1;
+  if (!moved && !penalty) return;
+  const plans = new Map();
+  const position = (p, progress) => progress === 56 ? lanePoint(p.color, 56) : planePoint({ ...p, progress });
+  if (moved) {
+    const last = g.last, p = before.planes.find(p => p.id === last.id);
+    if (!p || p.progress !== last.from) { flightMotion = null; return; }
+    let time = 0;
+    const legs = flightMotionSteps(last).map(step => {
+      const leg = { ...step, start: time, fromProgress: step.from, toProgress: step.to, from: position(p, step.from), to: position(p, step.to) };
+      time += step.duration; return leg;
+    });
+    plans.set(p.id, legs);
+    for (const id of last.captured) {
+      const victim = before.planes.find(p => p.id === id);
+      if (!victim) continue;
+      const index = flightIndex(victim.color, victim.progress);
+      const impact = legs.find(leg => (leg.type === 'fly' && victim.color === (p.color + 2) % 4 && victim.progress === 53) || (last.landings.includes(leg.toProgress) && index >= 0 && flightIndex(p.color, leg.toProgress) === index));
+      const delay = impact ? impact.start + impact.duration * (impact.type === 'fly' && victim.progress === 53 ? .5 : 1) : time;
+      plans.set(id, [{ from: planePoint(victim), to: airportPoint(victim.color, victim.number), start: delay, duration: 550, type: 'return' }]);
+    }
+  } else {
+    for (const p of before.planes) if (p.progress >= 0 && g.planes.find(q => q.id === p.id)?.progress === -1) {
+      plans.set(p.id, [{ from: planePoint(p), to: airportPoint(p.color, p.number), start: 0, duration: 600, type: 'return' }]);
+    }
+  }
+  flightMotion = plans.size ? { plans, started: performance.now(), duration: Math.max(...[...plans.values()].map(legs => { const last = legs.at(-1); return last.start + last.duration; })) } : null;
+}
+function animateFlightPieces(nodes) {
+  cancelAnimationFrame(flightFrame);
+  const motion = flightMotion;
+  if (!motion) return;
+  const tick = now => {
+    if (flightMotion !== motion) return;
+    const elapsed = now - motion.started;
+    for (const { piece, glyph, shadow, trail, legs, color } of nodes) {
+      const leg = legs.find(leg => elapsed < leg.start + leg.duration) || legs.at(-1);
+      const point = sampleFlightLeg(leg, elapsed), airborne = Math.sin(Math.PI * point.t);
+      const flying = ['fly', 'launch', 'home', 'return'].includes(leg.type), angle = flying ? Math.atan2(leg.to[1] - leg.from[1], leg.to[0] - leg.from[0]) * 180 / Math.PI : color * 90;
+      piece.setAttribute('transform', 'translate(' + point.x + ' ' + (point.y - point.lift) + ') scale(' + point.scale + ')');
+      piece.setAttribute('data-motion', leg.type);
+      glyph?.setAttribute('transform', 'translate(0 -1) rotate(' + angle + ') scale(' + 23 / 32 + ')');
+      shadow.setAttribute('cx', point.x); shadow.setAttribute('cy', point.y + 7);
+      shadow.setAttribute('rx', 13 - airborne * 4); shadow.setAttribute('opacity', .18 - airborne * .08);
+      const radians = angle * Math.PI / 180, x = point.x, y = point.y - point.lift;
+      trail.setAttribute('d', 'M' + (x - Math.cos(radians) * 19) + ' ' + (y - Math.sin(radians) * 19) + ' l' + (-Math.cos(radians) * 28) + ' ' + (-Math.sin(radians) * 28));
+      trail.setAttribute('opacity', flying && elapsed >= leg.start ? airborne * .6 : 0);
+    }
+    if (elapsed >= motion.duration) { flightMotion = null; render(); }
+    else flightFrame = requestAnimationFrame(tick);
+  };
+  tick(performance.now());
+}
 function renderFlight(board) {
   const g = game(), options = myTurn() ? flightOptions(g, seat()) : [];
-  board.setAttribute('viewBox', '0 0 700 700'); board.setAttribute('aria-label', '飞行棋棋盘，四座机场、52格环形航线和各色终点跑道');
-  board.append(svg('circle', { cx: center, cy: center, r: radius, fill: 'none', stroke: '#d6decc', 'stroke-width': 32 }));
+  board.setAttribute('viewBox', '0 0 700 700'); board.setAttribute('aria-label', '传统飞行棋棋盘：左上红、右上黄、右下蓝、左下绿，52格彩色航线和中央十字终点');
+  board.append(svg('rect', { width: 700, height: 700, fill: '#c8e8ef' }));
+  const layout = svg('g', { transform: 'translate(44 44) scale(36)', 'aria-hidden': 'true' });
+  board.append(layout);
   for (let c = 0; c < 4; c++) {
-    const [ax, ay] = airport(c), enabled = g.colors.includes(c);
-    board.append(svg('rect', { x: ax - 69, y: ay - 63, width: 138, height: 134, rx: 25, fill: FLIGHT_PAINTS[c], opacity: enabled ? .12 : .045, stroke: FLIGHT_PAINTS[c], 'stroke-width': 1.5 }));
-    board.append(svg('text', { x: ax, y: ay < center ? ay - 76 : ay + 91, fill: FLIGHT_PAINTS[c], class: 'airport-label' }, `${FLIGHT_COLORS[c]}方机场${enabled ? '' : ' · 空席'}`));
-    const [sx, sy] = launch(c); board.append(svg('circle', { cx: sx, cy: sy, r: 18, fill: FLIGHT_PAINTS[c], opacity: .16 }));
-    board.append(svg('text', { x: sx, y: sy + 4, fill: FLIGHT_PAINTS[c], 'font-size': 11, 'text-anchor': 'middle' }, '起'));
-    for (let p = 51; p <= 56; p++) { const [x, y] = lanePoint(c, p); board.append(svg('circle', { cx: x, cy: y, r: p === 56 ? 20 : p < 54 ? 10 : 14, fill: FLIGHT_PAINTS[c], opacity: p === 56 ? .7 : .27, stroke: '#fffdf5', 'stroke-width': 2 })); board.append(svg('text', { x, y: y + 4, 'text-anchor': 'middle', fill: p === 56 ? '#fff' : FLIGHT_PAINTS[c], 'font-size': 10 }, p === 56 ? '终' : ['↓', '←', '↑', '→'][c])); }
-    const [x1, y1] = ringPoint(flightIndex(c, 18)), [x2, y2] = ringPoint(flightIndex(c, 30));
-    board.append(svg('path', { d: `M ${x1} ${y1} L ${x2} ${y2}`, stroke: FLIGHT_PAINTS[c], class: 'flight-route' }));
+    const quarter = svg('g', { transform: 'rotate(' + c * 90 + ' 8.5 8.5)' }), color = flightPalette[c];
+    layout.append(quarter);
+    quarter.append(svg('rect', { x: .03, y: .03, width: 3.94, height: 3.94, rx: .06, fill: color }));
+    for (let n = 1; n <= 4; n++) {
+      const x = n % 2 ? 1.1 : 2.9, y = n <= 2 ? 1.1 : 2.9;
+      quarter.append(svg('circle', { cx: x, cy: y, r: .47, fill: '#fff' }));
+      if (!g.colors.includes(c)) { const mark = flightGlyph(x, y, .66, c); mark.setAttribute('opacity', '.28'); quarter.append(mark); }
+    }
+    quarter.append(svg('rect', { x: 1.95, y: 8.04, width: 5.2, height: .92, fill: color }));
+    quarter.append(svg('path', { d: 'M7.15 7.22 Q7.08 7.12 7.08 7.32 V9.68 Q7.08 9.88 7.22 9.76 L8.42 8.58 Q8.5 8.5 8.42 8.42Z', fill: color }));
+    for (let p = 51; p <= 56; p++) quarter.append(svg('circle', { cx: 2.5 + p - 51, cy: 8.5, r: .41, fill: '#fff' }));
+    quarter.append(flightGlyph(.55, 4.55, .75, c));
+    quarter.append(svg('path', { d: 'M.1 5.2 H.55 V5.04 L.86 5.3 L.55 5.56 V5.4 H.1Z', fill: color }));
+    // Two arrows straddle the opposite home lane, showing the shortcut direction.
+    for (const y of [7, 10]) quarter.append(svg('path', { d: 'M12.45 ' + (y - .28) + ' V' + (y + .1) + ' H12.28 L12.55 ' + (y + .36) + ' L12.82 ' + (y + .1) + ' H12.65 V' + (y - .28) + 'Z', fill: color }));
   }
   for (let i = 0; i < 52; i++) {
-    const [x, y] = ringPoint(i), color = i % 4; // Each entry square is color*13, hence color i%4.
-    board.append(svg('circle', { cx: x, cy: y, r: 14, fill: FLIGHT_PAINTS[color], opacity: .68, class: 'flight-cell' }));
-    const shortcut = [0, 1, 2, 3].some(c => flightIndex(c, 18) === i);
-    if (shortcut) board.append(svg('text', { x, y: y + 4, fill: '#fff', 'font-size': 13, 'text-anchor': 'middle' }, '✦'));
+    const cell = flightQuarter[i % 13], c = Math.floor(i / 13), color = i % 4;
+    const group = svg('g', { transform: 'rotate(' + c * 90 + ' 8.5 8.5)', class: 'flight-track-cell', 'data-index': i });
+    if (cell.rect) {
+      const [x, y, w, h] = cell.rect;
+      group.append(svg('rect', { x: x + .04, y: y + .04, width: w - .08, height: h - .08, rx: .09, fill: flightPalette[color] }));
+    } else {
+      group.append(svg('polygon', { points: cell.triangle.map(p => p.join(',')).join(' '), fill: flightPalette[color], stroke: '#c8e8ef', 'stroke-width': .08, 'stroke-linejoin': 'round' }));
+    }
+    group.append(svg('circle', { cx: cell.at[0], cy: cell.at[1], r: .41, fill: '#fff' })); layout.append(group);
+    if (i % 13 === 0) group.append(svg('path', { d: 'M.78 8.64 V8.45 H1.13 V8.29 L1.38 8.51 L1.13 8.73 V8.56 H.9 V8.64Z', fill: flightPalette[color] }));
+    for (let shortcutColor = 0; shortcutColor < 4; shortcutColor++) {
+      if ([18, 30].some(p => flightIndex(shortcutColor, p) === i)) {
+        const [x, y] = ringPoint(i); board.append(flightGlyph(x, y, 24, shortcutColor, shortcutColor * 90 + 90));
+      }
+    }
   }
-  board.append(svg('text', { x: center, y: center + 5, class: 'flight-home' }, '归航'));
-  board.append(svg('text', { x: center, y: 30, class: 'flight-hint' }, '顺时针前进 ↻ · 掷 6 起飞'));
-  board.append(svg('text', { x: center, y: 679, class: 'flight-hint' }, '✦ 飞跃起点 · 同色跳 4 格 · 四架归航即胜'));
-  const stacks = new Map();
-  for (const p of g.planes) {
-    const [baseX, baseY] = planePoint(p), key = `${baseX},${baseY}`;
+  const stacks = new Map(), animated = [];
+  for (const p of [...g.planes].sort((a, b) => Number(flightMotion?.plans.has(a.id) || false) - Number(flightMotion?.plans.has(b.id) || false))) {
+    const [baseX, baseY] = planePoint(p), key = baseX + ',' + baseY;
     const group = g.planes.filter(q => planePoint(q).join(',') === key), index = stacks.get(key) || 0; stacks.set(key, index + 1);
-    const dx = group.length > 1 ? (index % 2 ? 9 : -9) : 0, dy = group.length > 2 ? (index < 2 ? -8 : 8) : 0;
-    const x = baseX + dx, y = baseY + dy, enabled = options.includes(p.id);
-    const piece = svg('g', { role: 'button', tabindex: enabled ? 0 : -1, 'aria-disabled': !enabled, class: 'flight-plane', 'aria-label': `${FLIGHT_COLORS[p.color]}方 ${p.number} 号飞机，${p.progress === -1 ? '机库' : p.progress === 0 ? '起飞区' : p.progress === 56 ? '已到终点' : `第 ${p.progress} 格`}${enabled ? '，可移动' : ''}` });
-    if (enabled) piece.append(svg('circle', { cx: x, cy: y, r: 24, class: 'selected-ring' }));
-    piece.append(svg('circle', { cx: x, cy: y, r: 18, fill: FLIGHT_PAINTS[p.color], class: 'plane-disc', opacity: p.progress === 56 ? .45 : 1 }));
-    piece.append(svg('text', { x, y: y - 3, class: 'plane-glyph' }, p.progress === 56 ? '✓' : '✈'));
-    piece.append(svg('text', { x, y: y + 13, class: 'plane-number' }, String(p.number)));
+    const dx = group.length > 1 ? (index % 2 ? 7 : -7) : 0, dy = group.length > 2 ? (index < 2 ? -7 : 7) : 0;
+    const legs = flightMotion?.plans.get(p.id);
+    const x = legs ? 0 : baseX + dx, y = legs ? 0 : baseY + dy, enabled = options.includes(p.id), parked = !legs && (p.progress === -1 || p.progress === 56), r = parked ? 18 : 15;
+    const piece = svg('g', { role: 'button', tabindex: enabled ? 0 : -1, 'aria-disabled': !enabled, class: 'flight-plane', 'data-plane': p.id, 'aria-label': FLIGHT_COLORS[p.color] + '方 ' + p.number + ' 号飞机，' + (p.progress === -1 ? '机库' : p.progress === 0 ? '起飞区' : p.progress === 56 ? '已到终点' : '第 ' + p.progress + ' 格') + (enabled ? '，可移动' : '') });
+    if (enabled) piece.append(svg('circle', { cx: x, cy: y, r: r + 5, class: 'selected-ring' }));
+    piece.append(svg('circle', { cx: x, cy: y, r, fill: '#fff', stroke: flightPalette[p.color], class: 'plane-disc', opacity: p.progress === 56 ? .65 : 1 }));
+    let glyph;
+    if (p.progress === 56 && !legs) piece.append(svg('text', { x, y: y + 5, fill: flightPalette[p.color], class: 'plane-complete' }, '✓'));
+    else { glyph = flightGlyph(x, y - 1, parked ? 27 : 23, p.color, p.color * 90); piece.append(glyph); }
+    piece.append(svg('circle', { cx: x + r - 2, cy: y + r - 2, r: 6.5, fill: flightPalette[p.color], stroke: '#fff', 'stroke-width': 1 }));
+    piece.append(svg('text', { x: x + r - 2, y: y + r + 1, class: 'plane-number' }, String(p.number)));
+    if (legs) {
+      const shadow = svg('ellipse', { rx: 13, ry: 5, fill: '#244553', 'pointer-events': 'none' });
+      const trail = svg('path', { fill: 'none', stroke: flightPalette[p.color], 'stroke-width': 4, 'stroke-linecap': 'round', 'pointer-events': 'none' });
+      board.append(shadow, trail); animated.push({ piece, glyph, shadow, trail, legs, color: p.color });
+    }
     piece.addEventListener('click', () => flyPlane(p.id)); piece.addEventListener('keydown', e => { if (['Enter', ' '].includes(e.key)) { e.preventDefault(); flyPlane(p.id); } }); board.append(piece);
   }
+  animateFlightPieces(animated);
 }
 function renderBoard() { const board = $('table-svg'); board.replaceChildren(); boardDefs(board); if (kind === 'jungle') renderJungle(board); else renderFlight(board); }
 function render() {
+  if (kind === 'flight') syncFlightMotion();
   const local = mode === 'local', g = game(), isSeated = seated(), count = g.count || 2;
   $('online-tab').classList.toggle('selected', !local); $('local-tab').classList.toggle('selected', local); $('online-tab').setAttribute('aria-pressed', !local); $('local-tab').setAttribute('aria-pressed', local);
   $('online-tab').disabled = pending; $('local-tab').disabled = pending;
@@ -167,8 +279,9 @@ function render() {
     else if (!local && !allOnline()) { status = '有棋手暂时离线'; detail = '棋局已保留，等朋友回来再继续。'; }
     else { status = `轮到${local ? playerName(g.turn) : g.turn === seat() ? '你' : playerName(g.turn)}${kind === 'flight' ? g.phase === 'roll' ? '掷骰子' : '移动飞机' : '行棋'}`; detail = kind === 'flight' ? g.message : '先选己方动物，再点高亮格。不限时。'; }
   }
+  if (flightMotion && g.status === 'playing' && !room?.closed) { status = '飞机行进中…'; detail = g.message; }
   $('status-title').textContent = status; $('status-detail').textContent = detail; $('board-turn').textContent = isSeated ? status : '';
-  $('board-help').textContent = kind === 'flight' ? '飞机重叠时，也可点右侧编号选择。' : selected ? '选择高亮格行棋。' : '象 > 狮 > 虎 > 豹 > 狼 > 狗 > 猫 > 鼠';
+  $('board-help').textContent = kind === 'flight' ? '顺时针前进 · 飞机重叠时可用编号按钮选择。' : selected ? '选择高亮格行棋。' : '象 > 狮 > 虎 > 豹 > 狼 > 狗 > 猫 > 鼠';
   $('start-button').hidden = local || !room || room.started || room.closed || room.yourSeat !== 1; $('start-button').disabled = pending || !allOnline();
   $('flight-controls').hidden = kind !== 'flight' || !isSeated || (!local && !room.started) || g.status === 'finished';
   if (kind === 'flight') {
@@ -194,8 +307,8 @@ $('count-field').hidden = kind !== 'flight'; $('rules-title').textContent = `${t
 const rules = kind === 'flight' ? [
   '2～4 人，每方 4 架飞机。红方先手，之后顺时针轮流。开局采用 6 点起飞版。',
   '掷出 6，可选一架机库内的飞机放到起飞区，或让在途飞机前进 6 格；之后再掷一次。连续第三个 6 会把本回合前两个 6 动过的飞机送回机库，结束本回合。',
-  '飞机按骰点顺时针前进。落在自己的颜色格，向前跳 4 格一次；落在同色 ✦ 星格，沿虚线飞跃。直接落在星格时，飞跃后再跳 4 格；先跳到星格则只飞跃。',
-  '到达、跳到或飞到敌机所在格，会将该格所有敌机击回机库；飞跃会击回虚线经过的对方终点跑道第三格上的飞机。经过普通格不吃子。',
+  '飞机按骰点顺时针前进。落在自己的颜色格，向前跳 4 格一次；落在带同色飞机标记的飞跃起点，沿箭头飞跃。直接落在起点时，飞跃后再跳 4 格；先跳到起点则只飞跃。',
+  '到达、跳到或飞到敌机所在格，会将该格所有敌机击回机库；飞跃会击回飞跃航线经过的对方终点跑道第三格上的飞机。经过普通格不吃子。',
   '自己的飞机可以叠放，但每次只移动一架；重叠时可用编号按钮选择。机库和起飞区不被吃子。',
   '绕到本色入口后进入终点跑道。恰好到终点才算抵达；点数过大则在终点反弹走完余步。最先让四架飞机抵达的一方获胜，本局结束。'
 ] : [
