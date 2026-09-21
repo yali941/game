@@ -4,18 +4,19 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { networkInterfaces } from 'node:os';
 import { resolve } from 'node:path';
-import { newGame, playMove, resign } from './public/game.js';
+import { newGame, playMove, resign, undoMove, agreeDraw } from './public/game.js';
 
 const publicDir = new URL('./public/', import.meta.url);
 const TYPES = { '/': ['index.html', 'text/html; charset=utf-8'], '/style.css': ['style.css', 'text/css; charset=utf-8'], '/app.js': ['app.js', 'text/javascript; charset=utf-8'], '/game.js': ['game.js', 'text/javascript; charset=utf-8'], '/favicon.svg': ['favicon.svg', 'image/svg+xml'] };
 const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const code = () => Array.from(randomBytes(6), b => ALPHABET[b % ALPHABET.length]).join('');
-const seat = color => ({ color, token: randomBytes(32).toString('hex'), streams: new Set(), gone: false });
+const seat = color => ({ color, token: randomBytes(32).toString('hex'), streams: new Set(), gone: false, nextReactionAt: 0 });
 
 export function createGameServer() {
   const rooms = new Map(), rates = new Map();
   const connected = p => Boolean(p && !p.gone && p.streams.size);
-  const snapshot = (room, player) => ({ code: room.code, yourColor: player?.color, game: room.game, round: room.round, closed: room.closed, ready: room.ready, players: room.players.map(p => p ? { color: p.color, connected: connected(p), gone: p.gone } : null) });
+  const snapshot = (room, player) => ({ code: room.code, yourColor: player?.color, game: room.game, round: room.round, closed: room.closed, ready: room.ready, request: room.request, notice: room.notice, players: room.players.map(p => p ? { color: p.color, connected: connected(p), gone: p.gone } : null) });
+  function notifyRoom(room, text) { room.notice = { id: randomBytes(8).toString('hex'), text }; }
   function broadcast(room) {
     room.updatedAt = Date.now();
     for (const player of room.players) if (player) for (const stream of player.streams) stream.write(`data: ${JSON.stringify(snapshot(room, player))}\n\n`);
@@ -68,7 +69,7 @@ export function createGameServer() {
         if (rooms.size >= 500) throw new Error('房间暂时已满，请稍后再试');
         let id; do { id = code(); } while (rooms.has(id));
         const player = seat(1);
-        const room = { code: id, players: [player, null], game: newGame(), round: 1, ready: [], closed: false, updatedAt: now };
+        const room = { code: id, players: [player, null], game: newGame(), round: 1, ready: [], request: null, notice: null, closed: false, updatedAt: now };
         rooms.set(id, room);
         return json(res, 200, { token: player.token, ...snapshot(room, player) });
       }
@@ -85,7 +86,7 @@ export function createGameServer() {
       if (!player) return json(res, 401, { error: '身份已失效，请重新加入房间' });
       if (url.pathname === '/api/sync') return json(res, 200, snapshot(room, player));
       if (url.pathname === '/api/leave') {
-        player.gone = true; room.closed = true;
+        player.gone = true; room.closed = true; room.request = null;
         if (room.players.every(Boolean) && room.game.status === 'playing') {
           resign(room.game, player.color); room.game.reason = 'leave';
         }
@@ -94,15 +95,50 @@ export function createGameServer() {
         return json(res, 200, { ok: true });
       }
       if (room.closed) throw new Error('房间已关闭，请创建新房间');
+      // A requester may cancel even if their opponent has disconnected.
+      if (url.pathname === '/api/cancel-request') {
+        if (!room.request || data.id !== room.request.id || room.request.from !== player.color) throw new Error('这条请求已失效或不属于你');
+        notifyRoom(room, `${player.color === 1 ? '黑棋' : '白棋'}取消了${room.request.kind === 'undo' ? '悔棋' : '求和'}请求`);
+        room.request = null; broadcast(room);
+        return json(res, 200, snapshot(room, player));
+      }
       if (!room.players.every(connected)) throw new Error('等待双方连接后再继续');
-      if (url.pathname === '/api/move') playMove(room.game, player.color, data.x, data.y);
-      else if (url.pathname === '/api/resign') resign(room.game, player.color);
+      if (url.pathname === '/api/reaction') {
+        if (!['poop', 'heart', 'bomb'].includes(data.kind)) throw new Error('不支持的互动表情');
+        if (now < player.nextReactionAt) return json(res, 429, { error: '慢一点，每 2 秒可以互动一次' });
+        player.nextReactionAt = now + 2000;
+        const reaction = { id: randomBytes(8).toString('hex'), kind: data.kind, from: player.color, to: 3 - player.color };
+        for (const p of room.players) for (const output of p.streams) output.write(`event: reaction\ndata: ${JSON.stringify(reaction)}\n\n`);
+        return json(res, 200, { ok: true });
+      }
+      if (url.pathname === '/api/request') {
+        if (room.game.status !== 'playing') throw new Error('本局已结束');
+        if (room.request) throw new Error('请先处理当前请求');
+        if (!['undo', 'draw'].includes(data.kind)) throw new Error('无效的请求类型');
+        if (data.kind === 'undo' && !room.game.moves.some(move => move.color === player.color)) throw new Error('你还没有落子，暂时不能悔棋');
+        room.request = { id: randomBytes(16).toString('hex'), kind: data.kind, from: player.color, moveCount: room.game.moves.length, round: room.round };
+      } else if (url.pathname === '/api/respond') {
+        const request = room.request;
+        if (!request || data.id !== request.id || request.round !== room.round || request.moveCount !== room.game.moves.length) throw new Error('这条请求已失效');
+        if (request.from === player.color) throw new Error('需要由对手回应请求');
+        if (typeof data.accept !== 'boolean') throw new Error('请选择同意或拒绝');
+        if (data.accept) {
+          if (request.kind === 'undo') {
+            const count = undoMove(room.game, request.from);
+            notifyRoom(room, `悔棋已同意，撤回 ${count} 手，轮到${request.from === 1 ? '黑棋' : '白棋'}重新落子`);
+          } else { agreeDraw(room.game); notifyRoom(room, '双方同意和棋，本局结束'); }
+        } else notifyRoom(room, `${request.kind === 'undo' ? '悔棋' : '求和'}请求被拒绝，继续对弈`);
+        room.request = null;
+      } else if (url.pathname === '/api/move') {
+        if (room.request) throw new Error('请先处理悔棋或求和请求');
+        playMove(room.game, player.color, data.x, data.y);
+      } else if (url.pathname === '/api/resign') { resign(room.game, player.color); room.request = null; }
       else if (url.pathname === '/api/rematch') {
         if (room.game.status !== 'finished') throw new Error('本局尚未结束');
         if (!room.ready.includes(player.color)) room.ready.push(player.color);
         if (room.ready.length === 2) {
           for (const p of room.players) p.color = 3 - p.color;
-          room.players.reverse(); room.game = newGame(); room.ready = []; room.round++;
+          room.players.reverse(); room.game = newGame(); room.ready = []; room.request = null; room.notice = null; room.round++;
         }
       } else return json(res, 404, { error: '未知操作' });
       broadcast(room);
