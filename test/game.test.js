@@ -54,3 +54,21 @@ test('resigning awards victory to the opponent', () => {
   const game = newGame(); resign(game, 1); assert.equal(game.winner, 2); assert.equal(game.reason, 'resign');
   assert.throws(() => resign(game, 2), /结束/);
 });
+
+test('undo restores one or two moves and agreed draw preserves the board', async () => {
+  const { undoMove, agreeDraw } = await import('../public/game.js');
+  const game = newGame();
+  assert.throws(() => undoMove(game, 1));
+  playMove(game, 1, 7, 7); playMove(game, 2, 8, 7);
+  assert.equal(undoMove(game, 1), 2);
+  assert.equal(game.turn, 1); assert.equal(game.moves.length, 0);
+  assert.ok(game.board.every(point => point === 0));
+  playMove(game, 1, 6, 6); playMove(game, 2, 8, 8);
+  assert.equal(undoMove(game, 2), 1);
+  assert.equal(game.turn, 2); assert.equal(game.board[6 * 15 + 6], 1);
+  assert.equal(game.board[8 * 15 + 8], 0);
+  const board = [...game.board]; agreeDraw(game);
+  assert.equal(game.status, 'finished'); assert.equal(game.reason, 'agreement');
+  assert.equal(game.winner, 0); assert.deepEqual(game.board, board);
+  assert.throws(() => undoMove(game, 1)); assert.throws(() => agreeDraw(game));
+});
