@@ -4,7 +4,8 @@ import { refreshRankings } from './profile.js';
 export function createRoomUI({kind,send,refresh,playLocal}) {
   const panel=document.createElement('section');panel.className='panel club-panel chat-panel';panel.setAttribute('aria-label','棋室聊天');
   panel.innerHTML='<h2>棋室聊天</h2><p id="chat-identity" class="chat-identity"></p><div id="chat-members" class="chat-members"></div><ol id="chat-messages" class="chat-messages" role="log" aria-live="polite" aria-label="聊天记录"></ol><form id="chat-form" class="chat-form"><input id="chat-input" aria-label="聊天内容" maxlength="200" autocomplete="off" placeholder="说点什么…"><button id="chat-send" type="submit">发送</button></form><p id="chat-status" class="chat-status" role="status"></p>';
-  const ranking=document.querySelector('.ranking-panel');ranking.before(panel);
+  const ranking=document.querySelector('.ranking-panel'),roomPanel=document.getElementById('room-panel');
+  roomPanel.before(panel);ranking.before(roomPanel);
   const controls=document.createElement('div');controls.className='auto-controls';controls.id='auto-controls';controls.setAttribute('aria-label','托管控制');document.querySelector('.board-dock').append(controls);
   const el=id=>panel.querySelector('#'+id);
   let state,scope,lastMessages='',lastPlayers='',sending=false,changing=false,timer=null,taskKey='',localAuto=new Set();

@@ -58,6 +58,38 @@ function connect() {
 function enter(value) { session = { room: value.code, token: value.token }; persist(); apply(value); history.replaceState(null, '', `/play?game=${kind}&room=${value.code}`); connect(); }
 function clearRoom() { stream?.close(); stream = null; room = null; session = null; transport = false; selected = null; persist(); history.replaceState(null, '', `/play?game=${kind}`); $('table-effects').replaceChildren(); }
 function localDice() { const bytes = new Uint32Array(1); let value; do { crypto.getRandomValues(bytes); value = bytes[0]; } while (value >= 4294967292); return value % 6 + 1; }
+const rollOutcome = entry => (entry.luck === 'unlucky' ? '霉运加权 · ' : '') + (entry.outcome === 'penalty' ? '连续三个 6，返回机库' : entry.outcome === 'no-move' ? '无可移动飞机，换人' : '可移动飞机');
+const rollPlayer = n => `${playerName(n)}${mode === 'online' && room?.players[n - 1]?.name ? ` · ${room.players[n - 1].name}` : ''}`;
+function renderRollHistory() {
+  const g = game(), entries = g.rollHistory || [], list = $('roll-history-list');
+  $('roll-history').hidden = !seated();
+  $('roll-history-summary').textContent = `掷骰记录 · ${g.rolls} 次`;
+  $('roll-history-note').textContent = entries.length ? `保留本局最近 ${entries.length} 次，最新在前。再来一局会清空，请及时复制。` : '本局尚未掷骰。';
+  $('copy-roll-history').disabled = !entries.length;
+  // Keep the scroll position while chat messages and animation callbacks render.
+  const key = JSON.stringify([entries, mode === 'online' ? room?.players.map(p => p?.name) : null, g.colors]);
+  if (list.dataset.historyKey === key) return;
+  list.dataset.historyKey = key; list.replaceChildren();
+  for (const entry of [...entries].reverse()) {
+    const row = document.createElement('li'); row.className = 'team-' + ['red','yellow','blue','green'][g.colors[entry.player - 1]];
+    const label = document.createElement('span'); label.textContent = `#${entry.number} ${rollPlayer(entry.player)}`;
+    const dice = document.createElement('b'); dice.textContent = `${entry.dice} 点`;
+    const note = document.createElement('small'); note.textContent = rollOutcome(entry);
+    row.append(label, dice, note); list.append(row);
+  }
+}
+function rollHistoryText() {
+  const g = game(), entries = g.rollHistory || [];
+  const lines = ['一局 · 飞行棋掷骰记录', mode === 'online' ? `房间 ${room.code} · 第 ${room.round} 局 · 联机` : '同屏对弈', `本局共 ${g.rolls} 次，以下为最近 ${entries.length} 次（按时间先后）`, ''];
+  if (mode === 'online' && room?.dicePolicy) lines.push(`芽卫兵倒霉模式：昵称「${room.dicePolicy.name}」；1～6 点概率依次为 ${room.dicePolicy.weights.join('%、')}%。`, '');
+  for (let n = 1; n <= g.count; n++) {
+    const own = entries.filter(entry => entry.player === n);
+    lines.push(`${rollPlayer(n)}：${own.map(entry => entry.dice).join('、') || '尚无记录'}`);
+  }
+  lines.push('', '逐次记录：');
+  for (const entry of entries) lines.push(`#${entry.number} | ${rollPlayer(entry.player)} | ${entry.dice} 点 | ${rollOutcome(entry)}`);
+  return lines.join('\n');
+}
 function effect(value) {
   const icons = { poop: '💩', heart: '❤️', bomb: '💥', cry:'😭' }; if (!icons[value.kind]) return;
   const item = document.createElement('span'); item.className = 'table-effect'; item.textContent = icons[value.kind]; $('table-effects').append(item);
@@ -365,6 +397,7 @@ function render() {
     const scope=mode==='local'?localGame:room?room.code+':'+room.round:'lobby';
     if(diceActorSnapshot?.scope===scope && current.rolls===diceActorSnapshot.rolls+1) diceActor=diceActorSnapshot.turn;
     else if(diceActorSnapshot?.scope!==scope) diceActor=current.turn;
+    if (current.rollHistory?.length) diceActor = current.rollHistory.at(-1).player;
     diceActorSnapshot={scope,rolls:current.rolls,turn:current.turn};
     syncDiceState({ scope, rolls:current.rolls, value:current.dice, onFinish:render });
     if (!isDiceRolling()) syncFlightMotion();
@@ -419,6 +452,12 @@ function render() {
   $('create-button').disabled = pending; $('join-button').disabled = pending; $('copy-button').disabled = Boolean(room?.closed); renderBoard();
   syncTabletop({ kind, dice: g.dice, phase: g.phase, active: !$('flight-controls').hidden, moving: Boolean(flightMotion), pending });
   if(kind==='flight') {
+    const policy = !local && room?.dicePolicy;
+    const notice = $('dice-policy'); notice.hidden = !policy;
+    notice.textContent = policy ? `芽卫兵倒霉模式 · ${policy.name}${policy.seats.length ? '' : '（尚未匹配到玩家）'}\n1～6 点概率：${policy.weights.join('% / ')}%。其他玩家正常随机，娱乐局不计胜场。` : '';
+    renderRollHistory();
+    const lastRoll = g.rollHistory?.at(-1);
+    if (lastRoll && !isDiceRolling()) $('dice-outcome').textContent = `${rollPlayer(lastRoll.player)}掷出 ${lastRoll.dice} 点`;
     const actor=isDiceRolling() ? diceActor : flightMotion ? g.last?.player||g.turn : g.turn;
     const actorName=n=>`${playerName(n)}${!local&&room?.players[n-1]?.name ? ` · ${room.players[n-1].name}` : ''}`;
     const badge=$('dice-player');badge.hidden=!isSeated;
@@ -439,6 +478,14 @@ $('game-title').textContent = kind === 'flight' ? '下一站，好运。' : '大
 $('game-eyebrow').textContent = kind === 'flight' ? 'FLY TOGETHER. COME HOME FIRST.' : 'A LITTLE WILD. A GOOD STRATEGY.';
 $('game-subtitle').textContent = kind === 'flight' ? '传统飞行棋 · 2～4 人 · 让四架飞机平安归航。' : '传统斗兽棋 · 双人对弈 · 越过小河，走进对方兽穴。';
 $('count-field').hidden = kind !== 'flight'; $('rules-title').textContent = `${title}，这样玩。`;
+if (kind === 'flight') {
+  const field = document.createElement('label'); field.className = 'field-label'; field.htmlFor = 'dice-mode';
+  field.innerHTML = '房间玩法<select id="dice-mode"><option value="fair">标准模式 · 公平随机</option><option value="unlucky">芽卫兵倒霉模式</option></select>';
+  const help = document.createElement('p'); help.id = 'dice-mode-help'; help.className = 'small-note'; help.hidden = true;
+  help.textContent = '仅昵称完全匹配「芽卫兵」的玩家更难出仓和续掷。其他人正常随机，娱乐局不计胜场。';
+  $('count-field').after(field, help);
+  $('dice-mode').onchange = () => { help.hidden = $('dice-mode').value !== 'unlucky'; };
+}
 const rules = kind === 'flight' ? [
   '2～4 人，每方 4 架飞机。红方先手，之后顺时针轮流。掷出 2、4、6 点，可选一架机库内的飞机出仓到起飞区，或让在途飞机按点数前进；2、4 点行动后换人。',
   '掷出 6，可选一架机库内的飞机放到起飞区，或让在途飞机前进 6 格；之后再掷一次。连续第三次掷出 6 时，本回合前两次动过的飞机返回机库，并结束回合。四架飞机全部归航后，轮到下一位尚未完成的玩家。',
@@ -458,7 +505,7 @@ const ol = document.createElement('ol'); for (const text of rules) { const li = 
 const note = document.createElement('p'); note.textContent = '仍在比赛且未托管的玩家需保持在线；断线暂停、刷新原页面恢复。已归航玩家断线不影响其他人。行棋没有时间限制，可随时开启或取消托管。结束后全员确认再来一局，轮换先手。主动离开将关闭整间棋室；2 人对局判对方胜，3～4 人中途散局不计胜场。'; $('rules-content').append(note);
 $('rules-button').onclick = () => $('rules-dialog').showModal(); document.querySelectorAll('.dialog-close').forEach(b => b.onclick = () => b.closest('dialog').close());
 $('confirm-cancel').onclick = () => $('confirm-dialog').close(); $('confirm-ok').onclick = () => { $('confirm-dialog').close(); const fn = confirmAction; confirmAction = null; fn?.(); };
-$('create-button').onclick = () => action(async () => { await profileReady; enter(await api('create', { count: Number($('player-count').value) })); });
+$('create-button').onclick = () => action(async () => { await profileReady; enter(await api('create', { count: Number($('player-count').value), diceMode: kind === 'flight' ? $('dice-mode').value : 'fair' })); });
 $('join-form').onsubmit = e => { e.preventDefault(); action(async () => { await profileReady; enter(await api('join', { room: $('room-input').value.trim().toUpperCase() })); }); };
 $('room-input').oninput = () => $('room-input').value = $('room-input').value.replace(/[^a-zA-Z2-9]/g, '').toUpperCase();
 $('start-button').onclick = () => action(async () => apply(await api('start')));
@@ -484,6 +531,15 @@ document.querySelectorAll('[data-reaction]').forEach(b => b.onclick = () => acti
   nextReactionAt = Date.now() + 2000; setTimeout(render, 2050);
 }));
 setupTabletop(kind);
+if (kind === 'flight') $('copy-roll-history').onclick = async () => {
+  const text = rollHistoryText();
+  // Keep selectable text available even in browsers that isolate their clipboard.
+  $('roll-history-text').value = text; showBoardDialog($('roll-history-dialog')); $('roll-history-text').select();
+  try {
+    if (!navigator.clipboard || location.hostname === 'localhost') throw new Error('Use manual copy');
+    await navigator.clipboard.writeText(text); toast('掷骰记录已复制，可以粘贴分享。');
+  } catch { /* The selected text remains available for manual copy. */ }
+};
 roomUI=createRoomUI({kind,send:async(type,data)=>{const next=await api(type,data);if(type==='auto') apply(next);},refresh:render,playLocal:m=>{if(m.action==='roll') rollFlight(localGame,localGame.turn,localDice());else if(kind==='flight') moveFlight(localGame,localGame.turn,m.id);else moveJungle(localGame,localGame.turn,m.id,m.x,m.y);render();}});
 render(); await profileReady;
 try { const saved = JSON.parse(sessionStorage.getItem(`yiju-${kind}`) || 'null'); if (saved?.room && saved?.token) session = saved; } catch { /* Start fresh. */ }

@@ -73,7 +73,7 @@ export function newFlight(count = 2) {
   if (![2, 3, 4].includes(count)) throw new Error('飞行棋支持 2～4 人');
   const colors = flightColors(count);
   const finishOrder = [];
-  return { kind: 'flight', count, colors, finishOrder, planes: colors.flatMap((color, i) => Array.from({ length: 4 }, (_, n) => ({ id: `${i + 1}-${n + 1}`, owner: i + 1, color, number: n + 1, progress: -1 }))), turn: 1, status: 'playing', winner: 0, reason: '', phase: 'roll', dice: 0, sixes: 0, touched: [], rolls: 0, moves: [], last: null, message: '红方先掷骰，掷出 2、4、6 点可以出仓。' };
+  return { kind: 'flight', count, colors, finishOrder, planes: colors.flatMap((color, i) => Array.from({ length: 4 }, (_, n) => ({ id: `${i + 1}-${n + 1}`, owner: i + 1, color, number: n + 1, progress: -1 }))), turn: 1, status: 'playing', winner: 0, reason: '', phase: 'roll', dice: 0, sixes: 0, touched: [], rolls: 0, rollHistory: [], moves: [], last: null, message: '红方先掷骰，掷出 2、4、6 点可以出仓。' };
 }
 // -1 hangar; 0 launch; 1..50 shared track; 51..55 home lane; 56 finished.
 export const flightIndex = (color, progress) => progress >= 1 && progress <= 50 ? (color * 13 + 3 + progress - 1) % 52 : -1;
@@ -93,14 +93,20 @@ export function rollFlight(game, player, dice) {
   if (game.phase !== 'roll') throw new Error('请先选择一架飞机移动');
   if (!Number.isInteger(dice) || dice < 1 || dice > 6) throw new Error('无效的骰子点数');
   game.dice = dice; game.rolls++; game.sixes = dice === 6 ? game.sixes + 1 : 0;
+  // Record the acting seat before a no-move roll or penalty changes the turn.
+  const entry = { number: game.rolls, player, dice, outcome: 'move' };
+  game.rollHistory ??= [];
+  game.rollHistory.push(entry);
+  if (game.rollHistory.length > 200) game.rollHistory.splice(0, game.rollHistory.length - 200);
   if (game.sixes === 3) {
+    entry.outcome = 'penalty';
     for (const p of game.planes) if (game.touched.includes(p.id)) p.progress = -1;
     game.message = '连续三次掷出 6：本回合动过的飞机返回机库。';
     game.last = { player, dice, penalty: true }; nextFlightTurn(game); return;
   }
   game.phase = 'move';
   game.message = `掷出 ${dice} 点，请选择一架飞机${[2, 4, 6].includes(dice) ? '出仓或前进' : '前进'}。`;
-  if (!flightOptions(game).length) { game.message = `掷出 ${dice} 点，没有可移动的飞机，轮到下一位。`; nextFlightTurn(game); }
+  if (!flightOptions(game).length) { entry.outcome = 'no-move'; game.message = `掷出 ${dice} 点，没有可移动的飞机，轮到下一位。`; nextFlightTurn(game); }
 }
 export function moveFlight(game, player, id) {
   active(game, player);
