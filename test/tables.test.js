@@ -58,6 +58,33 @@ test('flight launch, turns and third-six penalty returns only touched planes', (
   assert.equal(g.turn,4);assert.equal(g.sixes,0);assert.deepEqual(g.touched,[]);
 });
 function prepareFlight(progress, dice) { const g = newFlight(2); g.planes[0].progress = progress; rollFlight(g, 1, dice); return g; }
+test('roll history records the roller before turn changes, including no-move and penalties', () => {
+  const g = newFlight(4);
+  rollFlight(g, 1, 1);
+  assert.deepEqual(g.rollHistory, [{ number: 1, player: 1, dice: 1, outcome: 'no-move' }]);
+  assert.equal(g.turn, 2);
+  assert.throws(() => rollFlight(g, 1, 6));
+  assert.throws(() => rollFlight(g, 2, 0));
+  rollFlight(g, 2, 6);
+  assert.throws(() => rollFlight(g, 2, 6));
+  moveFlight(g, 2, '2-1'); rollFlight(g, 2, 6); moveFlight(g, 2, '2-2'); rollFlight(g, 2, 6);
+  assert.deepEqual(g.rollHistory, [
+    { number: 1, player: 1, dice: 1, outcome: 'no-move' },
+    { number: 2, player: 2, dice: 6, outcome: 'move' },
+    { number: 3, player: 2, dice: 6, outcome: 'move' },
+    { number: 4, player: 2, dice: 6, outcome: 'penalty' }
+  ]);
+  assert.equal(g.turn, 3);
+});
+test('roll history retains the latest 200 accepted rolls without renumbering or hiding repeated ones', () => {
+  const g = newFlight(2);
+  for (let i = 0; i < 215; i++) rollFlight(g, g.turn, 1);
+  assert.equal(g.rollHistory.length, 200); assert.equal(g.rolls, 215);
+  assert.equal(g.rollHistory[0].number, 16); assert.equal(g.rollHistory.at(-1).number, 215);
+  assert.ok(g.rollHistory.every(entry => entry.dice === 1 && entry.outcome === 'no-move'));
+  assert.equal(g.rollHistory.filter(entry => entry.player === 1).length, 100);
+  assert.deepEqual(newFlight(2).rollHistory, []);
+});
 test('only 2, 4 and 6 launch from hangars, and only 6 grants an extra roll', () => {
   for(const dice of [1,2,3,4,5,6]) {
     const g=newFlight(2);rollFlight(g,1,dice);
@@ -151,12 +178,15 @@ test('multiplayer table API, 4 seats, reconnect, server dice, stale requests and
   assert.equal((await call('roll', {}, players[1])).status, 400);
   const version = tableRooms.get(h.code).version;
   const rolled = await call('roll', { dice: 1 }); assert.equal(rolled.game.dice, 6);
+  assert.deepEqual(rolled.game.rollHistory, [{ number: 1, player: 1, dice: 6, outcome: 'move' }]);
   assert.equal((await call('roll', {}, players[0], version)).status, 400);
+  assert.deepEqual((await call('sync')).game.rollHistory, rolled.game.rollHistory);
   assert.equal((await call('move', { id: '2-1' })).status, 400);
   await call('move', { id: '1-1' }); const synced = await streams[3].wait(s => s.game.moves.length === 1); assert.equal(synced.game.planes[0].progress, 0);
   streams[3].controller.abort(); await streams[0].wait(s => s.started && !s.players[3].connected);
   assert.equal((await call('roll')).status, 400);
-  const reconnected = await events(h.code, players[3].token); await reconnected.wait(s => s.game.moves.length === 1 && s.players.every(p => p?.connected));
+  const reconnected = await events(h.code, players[3].token); const restored = await reconnected.wait(s => s.game.moves.length === 1 && s.players.every(p => p?.connected));
+  assert.deepEqual(restored.game.rollHistory, rolled.game.rollHistory);
   assert.equal((await call('sync')).game.planes[0].progress, 0);
   await call('roll');await call('move',{id:'1-2'});await call('roll');
   const consecutive=await call('sync');assert.equal(consecutive.game.turn,2);assert.equal(consecutive.game.phase,'roll');
@@ -180,6 +210,7 @@ test('multiplayer table API, 4 seats, reconnect, server dice, stale requests and
     if(seat===2) {
       assert.equal((await call('auto',{enabled:true},players[1])).status,200);
       const completed=await streams[1].wait(s=>s.game.finishOrder.length===2);
+      assert.equal(completed.game.rollHistory.at(-1).player, 2); assert.equal(completed.game.rollHistory.at(-1).dice, 6);
       assert.equal(completed.players[1].auto,false);assert.equal(completed.game.turn,3);
     } else {
       assert.equal((await call('roll',{},players[seat-1])).status,200);
@@ -192,6 +223,7 @@ test('multiplayer table API, 4 seats, reconnect, server dice, stale requests and
   rankings = await (await fetch(`${base}/api/rankings?kind=flight`)).json(); assert.equal(rankings.entries[0].wins, 1);
   for (const p of players) await call('rematch', {}, p);
   assert.equal(r.round, 2); assert.equal(r.game.turn, 2); assert.equal(r.game.moves.length, 0);assert.deepEqual(r.game.finishOrder,[]);
+  assert.deepEqual(r.game.rollHistory, []); assert.equal(r.game.rolls, 0);
   await call('leave', {}, players[2]); assert.equal(r.closed, true); assert.equal(r.game.winner, 0);
   assert.equal((await call('roll')).status, 400);
   const jungleHost = await post('/api/table/create', { kind: 'jungle' }, null, profiles[0].token);
