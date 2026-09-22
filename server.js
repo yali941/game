@@ -7,10 +7,11 @@ import { resolve } from 'node:path';
 import { newGame, playMove, resign, undoMove, agreeDraw } from './public/game.js';
 import { createTableService } from './tables.js';
 import { createRecords } from './records.js';
+import { identifyPlayer, publicPlayer, addChat, setAuto, createAutoScheduler } from './room-tools.js';
 
 const publicDir = new URL('./public/', import.meta.url);
 const TYPES = { '/': ['index.html', 'text/html; charset=utf-8'], '/style.css': ['style.css', 'text/css; charset=utf-8'], '/app.js': ['app.js', 'text/javascript; charset=utf-8'], '/game.js': ['game.js', 'text/javascript; charset=utf-8'], '/favicon.svg': ['favicon.svg', 'image/svg+xml'] };
-for (const file of ['hall.html', 'table.html', 'table.css', 'table-app.js', 'table-rules.js', 'flight-path.js', 'profile.js', 'tabletop.css', 'tabletop-ui.js', 'animal-art.js']) TYPES[`/${file}`] = [file, file.endsWith('.js') ? 'text/javascript; charset=utf-8' : file.endsWith('.css') ? 'text/css; charset=utf-8' : 'text/html; charset=utf-8'];
+for (const file of ['hall.html', 'table.html', 'table.css', 'table-app.js', 'table-rules.js', 'flight-path.js', 'profile.js', 'tabletop.css', 'tabletop-ui.js', 'animal-art.js', 'chat-ui.js', 'auto-play.js']) TYPES[`/${file}`] = [file, file.endsWith('.js') ? 'text/javascript; charset=utf-8' : file.endsWith('.css') ? 'text/css; charset=utf-8' : 'text/html; charset=utf-8'];
 TYPES['/gomoku'] = TYPES['/']; TYPES['/play'] = TYPES['/table.html'];
 const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const code = () => Array.from(randomBytes(6), b => ALPHABET[b % ALPHABET.length]).join('');
@@ -21,12 +22,15 @@ export function createGameServer(options = {}) {
   const records = createRecords(options);
   const tables = createTableService({ ...options, records });
   const connected = p => Boolean(p && !p.gone && p.streams.size);
-  const snapshot = (room, player) => ({ code: room.code, yourColor: player?.color, game: room.game, round: room.round, closed: room.closed, ready: room.ready, request: room.request, notice: room.notice, players: room.players.map(p => p ? { color: p.color, connected: connected(p), gone: p.gone } : null) });
+  const snapshot = (room, player) => ({ code: room.code, yourColor: player?.color, game: room.game, round: room.round, closed: room.closed, ready: room.ready, request: room.request, notice: room.notice, chat:room.chat||[], players: room.players.map(p => p ? { ...publicPlayer(p), color: p.color, connected: connected(p), gone: p.gone } : null) });
+  const availablePlayer = p => Boolean(p && !p.gone && (connected(p)||p.auto));
+  const auto = createAutoScheduler({delay:options.autoDelay,ready:r=>!r.closed && !r.request && r.game.status==='playing' && r.players.every(availablePlayer),execute:(r,p,m)=>playMove(r.game,p.color,m.x,m.y),broadcast});
   function notifyRoom(room, text) { room.notice = { id: randomBytes(8).toString('hex'), text }; }
   function broadcast(room) {
     records.victory(room, 'gomoku', p => p.color);
     room.updatedAt = Date.now();
     for (const player of room.players) if (player) for (const stream of player.streams) stream.write(`data: ${JSON.stringify(snapshot(room, player))}\n\n`);
+    auto.sync(room);
   }
   function json(res, status, value) {
     res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
@@ -81,7 +85,7 @@ export function createGameServer(options = {}) {
         if (rooms.size >= 500) throw new Error('房间暂时已满，请稍后再试');
         let id; do { id = code(); } while (rooms.has(id));
         const player = seat(1);
-        player.profileId = records.lookup(req)?.id;
+        identifyPlayer(player, records.lookup(req));
         const room = { code: id, players: [player, null], game: newGame(), round: 1, ready: [], request: null, notice: null, closed: false, updatedAt: now };
         rooms.set(id, room);
         return json(res, 200, { token: player.token, ...snapshot(room, player) });
@@ -91,7 +95,7 @@ export function createGameServer(options = {}) {
       if (url.pathname === '/api/join') {
         if (room.closed) throw new Error('房间已关闭，请创建新房间');
         if (room.players[1]) throw new Error('房间已满，两位棋手已入座');
-        const player = seat(2); player.profileId = records.lookup(req)?.id; room.players[1] = player;
+        const player = seat(2); identifyPlayer(player,records.lookup(req)); room.players[1] = player;
         broadcast(room);
         return json(res, 200, { token: player.token, ...snapshot(room, player) });
       }
@@ -108,6 +112,8 @@ export function createGameServer(options = {}) {
         return json(res, 200, { ok: true });
       }
       if (room.closed) throw new Error('房间已关闭，请创建新房间');
+      if (url.pathname === '/api/chat') { addChat(room,player,data.text,player.color); broadcast(room); return json(res,200,{ok:true}); }
+      if (url.pathname === '/api/auto') { setAuto(player,data.enabled); broadcast(room); return json(res,200,snapshot(room,player)); }
       // A requester may cancel even if their opponent has disconnected.
       if (url.pathname === '/api/cancel-request') {
         if (!room.request || data.id !== room.request.id || room.request.from !== player.color) throw new Error('这条请求已失效或不属于你');
@@ -115,9 +121,9 @@ export function createGameServer(options = {}) {
         room.request = null; broadcast(room);
         return json(res, 200, snapshot(room, player));
       }
-      if (!room.players.every(connected)) throw new Error('等待双方连接后再继续');
+      if (!room.players.every(availablePlayer)) throw new Error('等待双方连接后再继续');
       if (url.pathname === '/api/reaction') {
-        if (!['poop', 'heart', 'bomb'].includes(data.kind)) throw new Error('不支持的互动表情');
+        if (!['poop', 'heart', 'bomb', 'cry'].includes(data.kind)) throw new Error('不支持的互动表情');
         if (now < player.nextReactionAt) return json(res, 429, { error: '慢一点，每 2 秒可以互动一次' });
         player.nextReactionAt = now + 2000;
         const reaction = { id: randomBytes(8).toString('hex'), kind: data.kind, from: player.color, to: 3 - player.color };
@@ -143,6 +149,7 @@ export function createGameServer(options = {}) {
         } else notifyRoom(room, `${request.kind === 'undo' ? '悔棋' : '求和'}请求被拒绝，继续对弈`);
         room.request = null;
       } else if (url.pathname === '/api/move') {
+        if(player.auto) throw new Error('请先取消托管再手动落子');
         if (room.request) throw new Error('请先处理悔棋或求和请求');
         playMove(room.game, player.color, data.x, data.y);
       } else if (url.pathname === '/api/resign') { resign(room.game, player.color); room.request = null; }
@@ -150,7 +157,7 @@ export function createGameServer(options = {}) {
         if (room.game.status !== 'finished') throw new Error('本局尚未结束');
         if (!room.ready.includes(player.color)) room.ready.push(player.color);
         if (room.ready.length === 2) {
-          for (const p of room.players) p.color = 3 - p.color;
+          for (const p of room.players) {p.color = 3 - p.color;p.auto=false;}
           room.players.reverse(); room.game = newGame(); room.ready = []; room.request = null; room.notice = null; room.round++;
         }
       } else return json(res, 404, { error: '未知操作' });
@@ -168,7 +175,7 @@ export function createGameServer(options = {}) {
     for (const [ip, rate] of rates) if (now - rate.start > 60000) rates.delete(ip);
   }, 60000);
   cleanup.unref();
-  server.on('close', () => clearInterval(cleanup));
+  server.on('close', () => {clearInterval(cleanup);auto.close();tables.close();});
   return { server, rooms, tableRooms: tables.rooms };
 }
 
