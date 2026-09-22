@@ -120,10 +120,12 @@ export function setupTabletop(kind) {
       turn.classList.add('dice-turn-status');
       const placements=document.createElement('ol');placements.id='flight-placements';placements.className='flight-placements';placements.setAttribute('aria-label','本局名次');placements.setAttribute('aria-live','polite');
       readout.append(actor,turn,result, hint, $('plane-options'),placements); shelf.append(console, readout); board.insertBefore(shelf, surface.nextSibling);
-      const luckNotice = document.createElement('p'); luckNotice.id = 'dice-policy'; luckNotice.className = 'dice-policy'; luckNotice.hidden = true; luckNotice.setAttribute('role', 'status'); readout.prepend(luckNotice);
+      const diceInfo = document.createElement('section'); diceInfo.id = 'dice-info'; diceInfo.className = 'club-panel dice-info'; diceInfo.hidden = true; diceInfo.setAttribute('aria-label', '模式说明与掷骰记录');
+      document.querySelector('.ranking-panel').after(diceInfo);
+      const luckNotice = document.createElement('p'); luckNotice.id = 'dice-policy'; luckNotice.className = 'dice-policy'; luckNotice.hidden = true; luckNotice.setAttribute('role', 'status'); diceInfo.append(luckNotice);
       const history = document.createElement('details'); history.id = 'roll-history'; history.className = 'roll-history';
       history.innerHTML = '<summary id="roll-history-summary">掷骰记录 · 0 次</summary><p id="roll-history-note">本局尚未掷骰。</p><button type="button" id="copy-roll-history" class="secondary-button">复制记录</button><ol id="roll-history-list" aria-label="掷骰记录，最新在前"></ol>';
-      readout.append(history);
+      diceInfo.append(history);
       const exportDialog = document.createElement('dialog'); exportDialog.id = 'roll-history-dialog'; exportDialog.className = 'board-dialog';
       exportDialog.setAttribute('aria-labelledby', 'roll-history-title');
       exportDialog.innerHTML = '<button type="button" class="dialog-close" aria-label="关闭掷骰记录">×</button><h2 id="roll-history-title">复制掷骰记录</h2><p>长按或全选下方文字复制，即可粘贴分享，核对点数。</p><textarea id="roll-history-text" aria-label="可复制的掷骰记录" readonly></textarea>';

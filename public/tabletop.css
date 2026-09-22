@@ -54,9 +54,11 @@ body.tabletop.flight #dice.dice-cube{--dice-size:44px;--dice-half:22px;display:b
 .flight-placements li{padding:5px 9px;border-radius:8px;border:1px solid var(--team);border-left-width:5px;background:#fffdf5;color:#343b30;font-size:12px;font-weight:700}
 .dice-readout .dice-player{max-width:100%;box-sizing:border-box;overflow-wrap:anywhere;line-height:1.5}
 .dice-readout #dice-outcome{display:block;font-size:16px;line-height:1.6;overflow-wrap:anywhere}
-.dice-readout .dice-policy{margin:0 0 12px;padding:9px 11px;border:1px solid #d6ba83;border-radius:8px;background:#fff2cf;color:#79602e;font-size:11px;line-height:1.8;white-space:pre-line;overflow-wrap:anywhere}
+.tabletop .dice-info{min-width:0;grid-column:1/-1;padding:18px}
+.dice-info .dice-policy{margin:0;padding:9px 11px;border:1px solid #d6ba83;border-radius:8px;background:#fff2cf;color:#79602e;font-size:11px;line-height:1.8;white-space:pre-line;overflow-wrap:anywhere}
 .roll-history{margin-top:14px;border-top:1px solid #d8ddca;padding-top:10px;font-size:11px;color:#536849}
-.flight .dice-shelf:has(.roll-history[open]){align-items:flex-start}
+.dice-policy[hidden]+.roll-history{margin-top:0;border-top:0;padding-top:0}
+.roll-history>p{font-size:11px;line-height:1.8;color:#879078;margin:9px 0 0}
 .roll-history summary{cursor:pointer;min-height:32px;line-height:32px}.roll-history button{font:inherit;padding:8px 12px;margin:9px 0;border:1px solid #ccd5bd;border-radius:6px;background:#fffdf4;color:#435b3f;min-height:36px}
 .roll-history ol{list-style:none;margin:0;padding:0;max-height:190px;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin}
 .roll-history li{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:3px 8px;margin:7px 0;padding:7px 9px;border-left:3px solid var(--team);border-radius:5px;background:var(--team-tint);color:#394b35;overflow-wrap:anywhere}

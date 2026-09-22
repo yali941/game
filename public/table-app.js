@@ -63,6 +63,7 @@ const rollPlayer = n => `${playerName(n)}${mode === 'online' && room?.players[n 
 function renderRollHistory() {
   const g = game(), entries = g.rollHistory || [], list = $('roll-history-list');
   $('roll-history').hidden = !seated();
+  $('dice-info').hidden = !seated();
   $('roll-history-summary').textContent = `掷骰记录 · ${g.rolls} 次`;
   $('roll-history-note').textContent = entries.length ? `保留本局最近 ${entries.length} 次，最新在前。再来一局会清空，请及时复制。` : '本局尚未掷骰。';
   $('copy-roll-history').disabled = !entries.length;
