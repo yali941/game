@@ -82,11 +82,32 @@ test('2, 3 and 4 player full flight games reach a legal winner', () => {
       assert.ok(g.planes.every(p => p.progress >= -1 && p.progress <= 56));
     }
     assert.equal(g.status, 'finished'); assert.ok(g.planes.filter(p => p.owner === g.winner).every(p => p.progress === 56));
+    assert.equal(g.finishOrder.length,count);assert.equal(new Set(g.finishOrder).size,count);
+    assert.equal(g.finishOrder[0],g.winner);
+    for(const seat of g.finishOrder.slice(0,-1)) assert.ok(g.planes.filter(p=>p.owner===seat).every(p=>p.progress===56));
   }
 });
 
+test('flight finishers skip turns, including sixes, and remaining players keep their order', () => {
+  const g=newFlight(4);
+  const finish=seat=>{
+    g.planes.filter(p=>p.owner===seat).forEach(p=>p.progress=56);
+    g.planes.find(p=>p.owner===seat).progress=50;
+    rollFlight(g,seat,6);moveFlight(g,seat,`${seat}-1`);
+  };
+  finish(1);assert.equal(g.status,'playing');assert.deepEqual(g.finishOrder,[1]);assert.equal(g.turn,2);assert.equal(g.sixes,0);
+  assert.throws(()=>rollFlight(g,1,6));assert.deepEqual(flightOptions(g,1),[]);
+  rollFlight(g,2,1);rollFlight(g,3,1);rollFlight(g,4,1);assert.equal(g.turn,2,'no-move turn skips first finisher');
+  g.sixes=2;rollFlight(g,2,6);assert.equal(g.turn,3);
+  finish(3);assert.deepEqual(g.finishOrder,[1,3]);assert.equal(g.turn,4);
+  g.sixes=2;rollFlight(g,4,6);assert.equal(g.turn,2,'triple six skips finished seat');
+  finish(2);assert.equal(g.status,'finished');assert.deepEqual(g.finishOrder,[1,3,2,4]);assert.equal(g.winner,1);
+  assert.ok(g.planes.filter(p=>p.owner===4).some(p=>p.progress!==56));
+  assert.throws(()=>rollFlight(g,4,6));assert.throws(()=>moveFlight(g,2,'2-1'));
+});
+
 test('multiplayer table API, 4 seats, reconnect, server dice, stale requests and rankings', async t => {
-  const { server, tableRooms } = createGameServer({ scoreFile: null, roll: () => 6 }); server.listen(0, '127.0.0.1'); await once(server, 'listening');
+  const { server, tableRooms } = createGameServer({ scoreFile: null, roll: () => 6, autoDelay:20 }); server.listen(0, '127.0.0.1'); await once(server, 'listening');
   const base = `http://127.0.0.1:${server.address().port}`, controllers = [];
   t.after(async () => { controllers.forEach(c => c.abort()); server.closeAllConnections(); await new Promise(r => server.close(r)); });
   const post = async (path, body = {}, auth, profile) => { const r = await fetch(base + path, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(auth ? { Authorization: `Bearer ${auth}` } : {}), ...(profile ? { 'X-Player-Token': profile } : {}) }, body: JSON.stringify(body) }); return { status: r.status, ...await r.json() }; };
@@ -119,12 +140,29 @@ test('multiplayer table API, 4 seats, reconnect, server dice, stale requests and
   assert.equal((await call('sync')).game.planes[0].progress, 0);
   // Set up a final legal landing and verify only server adjudication awards it.
   const r = tableRooms.get(h.code); r.game.planes.slice(0, 4).forEach(p => p.progress = 56); r.game.planes[0].progress = 50; r.game.sixes = 0;
-  await call('roll'); const won = await call('move', { id: '1-1' }); assert.equal(won.game.winner, 1);
+  await call('roll'); const first = await call('move', { id: '1-1' });
+  assert.equal(first.game.status,'playing');assert.deepEqual(first.game.finishOrder,[1]);assert.equal(first.game.turn,2);
+  assert.equal((await call('auto',{enabled:true})).status,400);
+  assert.equal((await (await fetch(`${base}/api/rankings?kind=flight`)).json()).entries.length,0);
+  streams[0].controller.abort();await streams[1].wait(s=>s.game.finishOrder.length===1 && !s.players[0].connected);
+  // Finished players can disconnect without blocking the remaining three players.
+  for(const seat of [2,3]) {
+    r.game.planes.filter(p=>p.owner===seat).forEach(p=>p.progress=56);r.game.planes.find(p=>p.owner===seat).progress=50;
+    if(seat===2) {
+      assert.equal((await call('auto',{enabled:true},players[1])).status,200);
+      const completed=await streams[1].wait(s=>s.game.finishOrder.length===2);
+      assert.equal(completed.players[1].auto,false);assert.equal(completed.game.turn,3);
+    } else {
+      assert.equal((await call('roll',{},players[seat-1])).status,200);
+      assert.equal((await call('move',{id:`${seat}-1`},players[seat-1])).status,200);
+    }
+  }
+  assert.equal(r.game.status,'finished');assert.deepEqual(r.game.finishOrder,[1,2,3,4]);assert.equal(r.game.winner,1);
   let rankings = await (await fetch(`${base}/api/rankings?kind=flight`)).json(); assert.equal(rankings.entries[0].wins, 1); assert.equal(rankings.entries[0].name, '棋友1');
   await call('sync'); await events(h.code, players[0].token);
   rankings = await (await fetch(`${base}/api/rankings?kind=flight`)).json(); assert.equal(rankings.entries[0].wins, 1);
   for (const p of players) await call('rematch', {}, p);
-  assert.equal(r.round, 2); assert.equal(r.game.turn, 2); assert.equal(r.game.moves.length, 0);
+  assert.equal(r.round, 2); assert.equal(r.game.turn, 2); assert.equal(r.game.moves.length, 0);assert.deepEqual(r.game.finishOrder,[]);
   await call('leave', {}, players[2]); assert.equal(r.closed, true); assert.equal(r.game.winner, 0);
   assert.equal((await call('roll')).status, 400);
   const jungleHost = await post('/api/table/create', { kind: 'jungle' }, null, profiles[0].token);
