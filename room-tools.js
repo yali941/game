@@ -43,7 +43,7 @@ export function createAutoScheduler({ ready, execute, broadcast, delay }) {
     const key=[room.round,room.game.turn,room.game.moves.length,room.game.rolls||0].join(':');
     if(tasks.get(room)?.key===key) return;
     cancel(room);
-    const pause=delay ?? (room.game.kind==='flight' ? room.game.phase==='move' ? 1500 : room.game.last?.id ? Math.max(1300,flightMotionSteps(room.game.last).reduce((total,step)=>total+step.duration,0)+180) : 1500 : 1100);
+    const pause=delay ?? (room.game.kind==='flight' ? room.game.last?.penalty ? 2100 : room.game.phase==='move' ? 1500 : room.game.last?.id ? Math.max(1300,flightMotionSteps(room.game.last).reduce((total,step)=>total+step.duration,0)+180) : 1500 : 1100);
     const timer=setTimeout(()=>{
       tasks.delete(room);
       if(!player.auto || !ready(room) || room.game.turn!==(player.seat||player.color)) return;
