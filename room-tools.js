@@ -9,6 +9,16 @@ export function identifyPlayer(player, profile) {
   player.auto=false;
 }
 export const publicPlayer = player => ({ id:player.id,name:player.name,auto:player.auto });
+export function updateRoomProfile(room,profile) {
+  let changed=false;
+  for(const player of room.players) if(player?.profileId===profile.id && player.name!==profile.name) {
+    player.name=profile.name;changed=true;
+  }
+  for(const message of room.chat||[]) if(message.playerId===profile.id && message.name!==profile.name) {
+    message.name=profile.name;changed=true;
+  }
+  return changed;
+}
 export function addChat(room, player, text, seat) {
   if(typeof text!=='string') throw new Error('请输入聊天内容');
   const clean=text.replace(/[\x00-\x1f\x7f]/g,' ').trim();

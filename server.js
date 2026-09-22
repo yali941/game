@@ -7,7 +7,7 @@ import { resolve } from 'node:path';
 import { newGame, playMove, resign, undoMove, agreeDraw } from './public/game.js';
 import { createTableService } from './tables.js';
 import { createRecords } from './records.js';
-import { identifyPlayer, publicPlayer, addChat, setAuto, createAutoScheduler } from './room-tools.js';
+import { identifyPlayer, publicPlayer, updateRoomProfile, addChat, setAuto, createAutoScheduler } from './room-tools.js';
 
 const publicDir = new URL('./public/', import.meta.url);
 const TYPES = { '/': ['index.html', 'text/html; charset=utf-8'], '/style.css': ['style.css', 'text/css; charset=utf-8'], '/app.js': ['app.js', 'text/javascript; charset=utf-8'], '/game.js': ['game.js', 'text/javascript; charset=utf-8'], '/favicon.svg': ['favicon.svg', 'image/svg+xml'] };
@@ -79,7 +79,12 @@ export function createGameServer(options = {}) {
       else if (++rate.count > 180) return json(res, 429, { error: '操作太频繁，请稍后重试' });
       const data = await body(req);
       if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('请求格式错误');
-      if (url.pathname === '/api/profile') return json(res, 200, records.profile(req, data));
+      if (url.pathname === '/api/profile') {
+        const profile=records.profile(req,data);
+        for(const room of rooms.values()) if(updateRoomProfile(room,profile)) broadcast(room);
+        tables.updateProfile(profile);
+        return json(res,200,profile);
+      }
       if (url.pathname.startsWith('/api/table/')) return await tables.handle(req, res, url, data);
       if (url.pathname === '/api/create') {
         if (rooms.size >= 500) throw new Error('房间暂时已满，请稍后再试');

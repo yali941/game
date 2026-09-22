@@ -1,6 +1,6 @@
 import { randomBytes, randomInt } from 'node:crypto';
 import { newTableGame, moveJungle, moveFlight, rollFlight } from './public/table-rules.js';
-import { identifyPlayer, publicPlayer, addChat, setAuto, createAutoScheduler } from './room-tools.js';
+import { identifyPlayer, publicPlayer, updateRoomProfile, addChat, setAuto, createAutoScheduler } from './room-tools.js';
 
 export function createTableService({ roll = () => randomInt(1, 7), records, autoDelay } = {}) {
   const rooms = new Map();
@@ -107,5 +107,6 @@ export function createTableService({ roll = () => randomInt(1, 7), records, auto
     r.version++; broadcast(r); return send(res, 200, snapshot(r, p));
   }
   const cleanup = () => { for (const [code, r] of rooms) if (!r.players.some(connected) && Date.now() - r.updatedAt > 86400000) rooms.delete(code); };
-  return { handle, cleanup, rooms, close:auto.close };
+  const updateProfile=profile=>{for(const r of rooms.values()) if(updateRoomProfile(r,profile)) broadcast(r);};
+  return { handle, cleanup, rooms, updateProfile, close:auto.close };
 }
