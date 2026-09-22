@@ -1,4 +1,5 @@
 import { chooseAutoMove } from './auto-play.js';
+import { refreshRankings } from './profile.js';
 
 export function createRoomUI({kind,send,refresh,playLocal}) {
   const panel=document.createElement('section');panel.className='panel club-panel chat-panel';panel.setAttribute('aria-label','棋室聊天');
@@ -6,7 +7,7 @@ export function createRoomUI({kind,send,refresh,playLocal}) {
   const ranking=document.querySelector('.ranking-panel');ranking.before(panel);
   const controls=document.createElement('div');controls.className='auto-controls';controls.id='auto-controls';controls.setAttribute('aria-label','托管控制');document.querySelector('.board-dock').append(controls);
   const el=id=>panel.querySelector('#'+id);
-  let state,scope,lastMessages='',sending=false,changing=false,timer=null,taskKey='',localAuto=new Set();
+  let state,scope,lastMessages='',lastPlayers='',sending=false,changing=false,timer=null,taskKey='',localAuto=new Set();
   document.querySelectorAll('dialog').forEach(dialog=>dialog.addEventListener('close',refresh));
   const isAuto=seat=>state?.mode==='local' ? localAuto.has(seat) : Boolean(state?.room?.players.find(p=>p && (p.seat||p.color)===seat)?.auto);
   const cancel=()=>{clearTimeout(timer);timer=null;taskKey='';};
@@ -26,13 +27,16 @@ export function createRoomUI({kind,send,refresh,playLocal}) {
     for(const seat of game.finishOrder||[]) localAuto.delete(seat);
     const players=local ? Array.from({length:game.count||2},(_,i)=>({seat:i+1,name:team(i+1).name,id:'',auto:localAuto.has(i+1)})) : (room?.players||[]).filter(Boolean);
     const mine=players.find(p=>(p.seat||p.color)===(room?.yourSeat||room?.yourColor));
-    el('chat-identity').textContent=local ? '同屏对弈 · 联机后可聊天' : mine ? `我的 ID：${mine.id}` : '加入棋室后，与朋友聊天';
+    el('chat-identity').textContent=local ? '同屏对弈 · 联机后可聊天' : mine ? `我的昵称：${mine.name}` : '加入棋室后，与朋友聊天';
+    el('chat-identity').title=mine ? `玩家 ID：${mine.id} · 与胜场榜共用昵称` : '';
+    const playerNames=JSON.stringify(players.map(p=>[p.id,p.name]));
+    if(!local && playerNames!==lastPlayers) {lastPlayers=playerNames;refreshRankings();}
     el('chat-members').replaceChildren();
     for(const player of players) {
       const member=document.createElement('div'),name=document.createElement('strong'),id=document.createElement('small');
       member.className='chat-member team-'+team(player.seat||player.color).color;
       name.textContent=`${team(player.seat||player.color).name} · ${player.name}${player.auto?' · 托管':''}`;
-      id.textContent=player.id ? `ID ${player.id}` : '同屏玩家';member.append(name,id);el('chat-members').append(member);
+      member.title=player.id ? `玩家 ID：${player.id}` : '同屏玩家';member.append(name);el('chat-members').append(member);
     }
     const messages=local ? [] : room?.chat||[],key=JSON.stringify([scope===game?'local':scope,messages]);
     if(key!==lastMessages) {
@@ -41,8 +45,8 @@ export function createRoomUI({kind,send,refresh,playLocal}) {
       if(!messages.length) {const empty=document.createElement('li');empty.className='chat-empty';empty.textContent=local?'选择好友联机即可发送消息。':'还没有消息，和朋友打个招呼吧。';log.append(empty);}
       for(const message of messages) {
         const item=document.createElement('li'),head=document.createElement('div'),name=document.createElement('strong'),id=document.createElement('small'),body=document.createElement('p');
-        item.className='chat-message'+(message.playerId===mine?.id?' is-mine':'');
-        name.textContent=message.name;id.textContent=`ID ${message.playerId}`;head.append(name,id);body.textContent=message.text;item.append(head,body);log.append(item);
+        item.className='chat-message team-'+team(message.seat).color+(message.playerId===mine?.id?' is-mine':'');
+        name.textContent=message.name;name.title=`玩家 ID：${message.playerId}`;id.textContent=team(message.seat).name;head.append(name,id);body.textContent=message.text;item.append(head,body);log.append(item);
       }
       if(nearBottom) log.scrollTop=log.scrollHeight;
     }

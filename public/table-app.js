@@ -226,8 +226,7 @@ function syncFlightMotion() {
   flightSnapshot = { scope, moves: g.moves.length, rolls: g.rolls, planes: g.planes.map(p => ({ ...p })) };
   if (!before || before.scope !== scope || matchMedia('(prefers-reduced-motion: reduce)').matches) { flightMotion = null; return; }
   const moved = g.last?.id && g.moves.length === before.moves + 1;
-  const penalty = g.last?.penalty && g.rolls === before.rolls + 1;
-  if (!moved && !penalty) return;
+  if (!moved) return;
   const plans = new Map();
   const position = (p, progress) => progress === 56 ? lanePoint(p.color, 56) : planePoint({ ...p, progress });
   if (moved) {
@@ -246,10 +245,6 @@ function syncFlightMotion() {
       const impact = legs.find(leg => (leg.type === 'fly' && victim.color === (p.color + 2) % 4 && victim.progress === 53) || (last.landings.includes(leg.toProgress) && index >= 0 && flightIndex(p.color, leg.toProgress) === index));
       const delay = impact ? impact.start + impact.duration * (impact.type === 'fly' && victim.progress === 53 ? .5 : 1) : time;
       plans.set(id, [{ from: planePoint(victim), to: airportPoint(victim.color, victim.number), start: delay, duration: 550, type: 'return' }]);
-    }
-  } else {
-    for (const p of before.planes) if (p.progress >= 0 && g.planes.find(q => q.id === p.id)?.progress === -1) {
-      plans.set(p.id, [{ from: planePoint(p), to: airportPoint(p.color, p.number), start: 0, duration: 600, type: 'return' }]);
     }
   }
   flightMotion = plans.size ? { plans, started: performance.now(), duration: Math.max(...[...plans.values()].map(legs => { const last = legs.at(-1); return last.start + last.duration; })) } : null;
@@ -413,9 +408,10 @@ function render() {
   syncTabletop({ kind, dice: g.dice, phase: g.phase, active: !$('flight-controls').hidden, moving: Boolean(flightMotion), pending });
   if(kind==='flight') {
     const actor=isDiceRolling() ? diceActor : flightMotion ? g.last?.player||g.turn : g.turn;
+    const actorName=n=>`${playerName(n)}${!local&&room?.players[n-1]?.name ? ` · ${room.players[n-1].name}` : ''}`;
     const badge=$('dice-player');badge.hidden=!isSeated;
     badge.className='dice-player team-'+['red','yellow','blue','green'][g.colors[(g.status==='finished'&&g.winner?g.winner:actor)-1]];
-    badge.textContent=g.status==='finished' ? g.winner?`${playerName(g.winner)}获胜`:'本局结束' : `${playerName(actor)}${!local&&room?.yourSeat===actor?' · 你':''} · ${isDiceRolling()?'掷骰中':flightMotion?'飞机前进中':!local&&!room?.started?'等待开局':g.phase==='move'?'选择飞机':'掷骰回合'}`;
+    badge.textContent=g.status==='finished' ? g.winner?`${actorName(g.winner)}获胜`:'本局结束' : `${actorName(actor)}${!local&&room?.yourSeat===actor?' · 你':''} · ${isDiceRolling()?'掷骰中':flightMotion?'飞机前进中':!local&&!room?.started?'等待开局':g.phase==='move'?'选择飞机':'掷骰回合'}`;
     const placements=$('flight-placements');placements.replaceChildren();placements.hidden=!g.finishOrder?.length;
     if(g.status==='finished') $('dice-hint').textContent='本局结束，名次如下。';
     for(const [i,seat] of (g.finishOrder||[]).entries()) {
@@ -433,7 +429,7 @@ $('game-subtitle').textContent = kind === 'flight' ? '传统飞行棋 · 2～4 �
 $('count-field').hidden = kind !== 'flight'; $('rules-title').textContent = `${title}，这样玩。`;
 const rules = kind === 'flight' ? [
   '2～4 人，每方 4 架飞机。红方先手，之后顺时针轮流。开局采用 6 点起飞版。',
-  '掷出 6，可选一架机库内的飞机放到起飞区，或让在途飞机前进 6 格；之后再掷一次。连续第三个 6 会把本回合前两个 6 动过的飞机送回机库，结束本回合。',
+  '掷出 6，可选一架机库内的飞机放到起飞区，或让在途飞机前进 6 格；之后再掷一次。连续掷出 6 点也可继续行动，不会将飞机送回机库。四架飞机全部归航后，轮到下一位尚未完成的玩家。',
   '飞机按骰点顺时针前进。落在自己的颜色格，向前跳 4 格一次；落在带同色飞机标记的飞跃起点，沿箭头飞跃。直接落在起点时，飞跃后再跳 4 格；先跳到起点则只飞跃。',
   '到达、跳到或飞到敌机所在格，会将该格所有敌机击回机库；飞跃会击回飞跃航线经过的对方终点跑道第三格上的飞机。经过普通格不吃子。',
   '自己的飞机可以叠放，但每次只移动一架；重叠时可用编号按钮选择。机库和起飞区不被吃子。',

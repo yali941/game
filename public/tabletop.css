@@ -52,3 +52,9 @@ body.tabletop.flight #dice.dice-cube{--dice-size:44px;--dice-half:22px;display:b
 .flight-placements{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 0;padding:0;list-style:none}
 .flight-placements[hidden]{display:none}
 .flight-placements li{padding:5px 9px;border-radius:8px;border:1px solid var(--team);border-left-width:5px;background:#fffdf5;color:#343b30;font-size:12px;font-weight:700}
+.dice-readout .dice-player{max-width:100%;box-sizing:border-box;overflow-wrap:anywhere;line-height:1.5}
+.dice-player:before{flex-shrink:0}
+.chat-message strong,.chat-message small{color:var(--team)}
+.chat-message p,.chat-message.is-mine p{background:var(--team-tint);border-color:var(--team);border-left-width:3px;color:#28332e}
+.chat-message.team-black p{background:#333d37;border-color:#222a25;color:#fffdf5}
+.chat-message.team-white p{background:#fffefa;border-color:#b6b2a7;color:#363d35}

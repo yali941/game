@@ -17,9 +17,14 @@ export async function refreshRankings() {
     const response = await fetch(`/api/rankings?kind=${panel.dataset.rankKind}`, { headers: profileHeaders(), signal: AbortSignal.timeout(10000) });
     if (!response.ok) throw new Error('榜单暂时不可用');
     const board = await response.json(), list = document.getElementById('rank-list'); list.replaceChildren();
+    const nickname=document.getElementById('nickname');
+    if(board.me && profile?.id===board.me.id) {
+      if(nickname && document.activeElement!==nickname && nickname.value===profile.name) nickname.value=board.me.name;
+      profile.name=board.me.name;
+    }
     for (const entry of board.entries) {
       const item = document.createElement('li'), rank = document.createElement('span'), name = document.createElement('span'), wins = document.createElement('b');
-      rank.textContent = String(entry.rank).padStart(2, '0'); name.textContent = entry.name; name.title = `玩家 ${entry.id.slice(0, 6)}`; wins.textContent = `${entry.wins} 胜`;
+      rank.textContent = String(entry.rank).padStart(2, '0'); name.textContent = entry.name; name.title = `玩家 ID：${entry.id}`; wins.textContent = `${entry.wins} 胜`;
       if (entry.id === board.me?.id) item.classList.add('is-me'); item.append(rank, name, wins); list.append(item);
     }
     if (!board.entries.length) { const item = document.createElement('li'); item.textContent = '第一场胜利，等你来写。'; list.append(item); }
