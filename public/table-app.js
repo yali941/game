@@ -3,6 +3,7 @@ import { profileReady, profileHeaders, refreshRankings } from './profile.js';
 import { flightMotionSteps, sampleFlightLeg } from './flight-path.js';
 import { addTabletopDefs, animalPortrait } from './animal-art.js';
 import { setupTabletop, showBoardDialog, syncTabletop, syncDiceState, isDiceRolling } from './tabletop-ui.js';
+import { createRoomUI } from './chat-ui.js';
 
 const $ = id => document.getElementById(id), ns = 'http://www.w3.org/2000/svg';
 const params = new URLSearchParams(location.search), kind = params.get('game') === 'jungle' ? 'jungle' : 'flight';
@@ -11,12 +12,15 @@ let mode = 'online', room = null, session = null, stream = null, transport = fal
 let localGame = newTableGame(kind, 2), selected = null, toastTimer, confirmAction, nextReactionAt = 0, lastRankedRound = '';
 let flightSnapshot = null, flightMotion = null, flightFrame = 0;
 let jungleSnapshot = null, jungleMotion = null, jungleFrame = 0;
+let roomUI;
+let diceActor=1, diceActorSnapshot;
 const game = () => mode === 'local' ? localGame : room?.game || localGame;
 const seat = () => mode === 'local' ? game().turn : room?.yourSeat;
-const allOnline = () => room?.players.every(p => p?.connected && !p.gone);
+const allOnline = () => room?.players.every(p => ((p?.connected||p?.auto) && !p.gone) || (room.game.status==='playing' && room.game.finishOrder?.includes(p?.seat)));
 const seated = () => mode === 'local' || Boolean(room);
 const available = () => !pending && !flightMotion && !jungleMotion && !isDiceRolling() && (mode === 'local' || (transport && room?.started && !room.closed && allOnline()));
-const myTurn = () => available() && game().status === 'playing' && game().turn === seat();
+const autoPlaying = () => mode==='local' ? roomUI?.isAuto(localGame.turn,localGame) : room?.players.find(p=>p?.seat===seat())?.auto;
+const myTurn = () => available() && !autoPlaying() && game().status === 'playing' && game().turn === seat();
 const colorOf = n => kind === 'flight' ? game().colors[n - 1] : n === 1 ? 0 : 2;
 const playerName = n => `${FLIGHT_COLORS[colorOf(n)]}方`;
 const paint = n => (kind === 'flight' ? flightPalette : FLIGHT_PAINTS)[colorOf(n)];
@@ -55,17 +59,17 @@ function enter(value) { session = { room: value.code, token: value.token }; pers
 function clearRoom() { stream?.close(); stream = null; room = null; session = null; transport = false; selected = null; persist(); history.replaceState(null, '', `/play?game=${kind}`); $('table-effects').replaceChildren(); }
 function localDice() { const bytes = new Uint32Array(1); let value; do { crypto.getRandomValues(bytes); value = bytes[0]; } while (value >= 4294967292); return value % 6 + 1; }
 function effect(value) {
-  const icons = { poop: '💩', heart: '❤️', bomb: '💥' }; if (!icons[value.kind]) return;
+  const icons = { poop: '💩', heart: '❤️', bomb: '💥', cry:'😭' }; if (!icons[value.kind]) return;
   const item = document.createElement('span'); item.className = 'table-effect'; item.textContent = icons[value.kind]; $('table-effects').append(item);
   while ($('table-effects').children.length > 3) $('table-effects').firstElementChild.remove();
-  setTimeout(() => item.remove(), 2000); $('reaction-feedback').textContent = `${playerName(value.from)}${value.kind === 'heart' ? '送来爱心' : value.kind === 'bomb' ? '扔来炸弹' : '扔来大便'} ${icons[value.kind]}`;
+  setTimeout(() => item.remove(), 2000); $('reaction-feedback').textContent = `${playerName(value.from)}${value.kind === 'heart' ? '送来爱心' : value.kind === 'bomb' ? '扔来炸弹' : value.kind==='cry'?'发来哭哭脸':'扔来大便'} ${icons[value.kind]}`;
 }
 
 function boardDefs(board) {
   const defs = svg('defs'), shadow = svg('filter', { id: 'piece-shadow', x: '-50%', y: '-50%', width: '200%', height: '210%', 'color-interpolation-filters': 'sRGB' });
   shadow.append(svg('feDropShadow', { dx: 1, dy: 3.5, stdDeviation: 1.5, 'flood-opacity': .3, 'flood-color': '#293c21' })); defs.append(shadow);
   addTabletopDefs(defs);
-  for (const [c, colors] of [['0', ['#ffb1ba', '#e6607a']], ['1', ['#fff0a2', '#f0bd32']], ['2', ['#b7eaf7', '#49b4d6']], ['3', ['#c1edb4', '#65b77d']]]) {
+  for (const [c, colors] of [['0', ['#ff383b', '#df0923']], ['1', ['#ffe326', '#ffc400']], ['2', ['#299dff', '#0066e8']], ['3', ['#21d961', '#009e40']]]) {
     const gradient = svg('radialGradient', { id: 'flight-piece-' + c, cx: '30%', cy: '20%', r: '80%' });
     gradient.append(svg('stop', { offset: '0%', 'stop-color': colors[0] }), svg('stop', { offset: '100%', 'stop-color': colors[1] })); defs.append(gradient);
   }
@@ -324,11 +328,12 @@ function renderFlight(board) {
     const x = legs ? 0 : baseX + dx, y = legs ? 0 : baseY + dy, enabled = options.includes(p.id), parked = !legs && (p.progress === -1 || p.progress === 56), r = parked ? 21 : 17;
     const piece = svg('g', { role: 'button', tabindex: enabled ? 0 : -1, 'aria-disabled': !enabled, class: 'flight-plane', 'data-plane': p.id, 'aria-label': FLIGHT_COLORS[p.color] + '方 ' + p.number + ' 号飞机，' + (p.progress === -1 ? '机库' : p.progress === 0 ? '起飞区' : p.progress === 56 ? '已到终点' : '第 ' + p.progress + ' 格') + (enabled ? '，可移动' : '') });
     if (enabled) piece.append(svg('circle', { cx: x, cy: y, r: r + 5, class: 'selected-ring' }));
-    piece.append(svg('circle', { cx: x, cy: y + 3, r, fill: ['#bb405d','#c69316','#2b88ad','#41885d'][p.color], class: 'plane-base', filter:'url(#piece-shadow)' }));
+    piece.append(svg('ellipse',{cx:x+1,cy:y+11,rx:r+2,ry:r*.72,fill:'#15343d',opacity:.2,'pointer-events':'none'}));
+    piece.append(svg('circle', { cx: x, cy: y + 6, r:r+1, fill: ['#900b1b','#b47700','#003e97','#00692a'][p.color], class: 'plane-base', filter:'url(#piece-shadow)' }));
     piece.append(svg('path',{ d:'M'+(x-r*.85)+' '+(y+r*.45)+' Q'+x+' '+(y+r*1.2)+' '+(x+r*.85)+' '+(y+r*.45), stroke:'#ffffff45', 'stroke-width':1, fill:'none', transform:'translate(0 4)' }));
     const top = svg('g',{transform:'translate('+x+' '+y+')',class:'plane-top'});
     top.append(svg('circle', { cx:0,cy:0,r,fill:'url(#flight-piece-' + p.color + ')',class:'plane-disc',opacity:p.progress===56?.8:1 }));
-    top.append(svg('circle',{cx:0,cy:0,r:r-2.6,fill:'none',stroke:'#fffc','stroke-width':1.2}));
+    top.append(svg('circle',{cx:0,cy:0,r:r-1,fill:'none',stroke:'#fff','stroke-width':2.5}));
     top.append(svg('circle',{cx:0,cy:0,r:r-4.5,fill:'none',stroke:['#d75a7680','#d6a72680','#349abd80','#60a87580'][p.color],'stroke-width':1.2}));
     top.append(svg('path',{d:'M'+(-r*.72)+' '+(-r*.52)+' Q0 '+(-r*1.15)+' '+(r*.7)+' '+(-r*.52),fill:'none',stroke:'#fff','stroke-width':1.6,'stroke-linecap':'round',opacity:.85}));
     let glyph;
@@ -350,7 +355,11 @@ function renderBoard() { const board = $('table-svg'); board.replaceChildren(); 
 function render() {
   if (kind === 'flight') {
     const current = game();
-    syncDiceState({ scope:mode==='local'?localGame:room?room.code+':'+room.round:'lobby', rolls:current.rolls, value:current.dice, onFinish:render });
+    const scope=mode==='local'?localGame:room?room.code+':'+room.round:'lobby';
+    if(diceActorSnapshot?.scope===scope && current.rolls===diceActorSnapshot.rolls+1) diceActor=diceActorSnapshot.turn;
+    else if(diceActorSnapshot?.scope!==scope) diceActor=current.turn;
+    diceActorSnapshot={scope,rolls:current.rolls,turn:current.turn};
+    syncDiceState({ scope, rolls:current.rolls, value:current.dice, onFinish:render });
     if (!isDiceRolling()) syncFlightMotion();
   } else syncJungleMotion();
   const local = mode === 'local', g = game(), isSeated = seated(), count = g.count || 2;
@@ -366,12 +375,14 @@ function render() {
     const player = document.createElement('div'); player.className = `table-player${isSeated && g.status === 'playing' && g.turn === n ? ' active' : ''}`;
     const token = document.createElement('span'); token.className = 'player-token'; token.style.backgroundColor = paint(n); token.textContent = kind === 'flight' ? '✈' : n === 1 ? '红' : '蓝';
     const name = document.createElement('span'); name.textContent = `${playerName(n)}${!local && room?.yourSeat === n ? ' · 你' : ''}`;
-    const note = document.createElement('small'); note.textContent = local ? '已入座' : !room?.players[n - 1] ? '等待入座' : room.players[n - 1].gone ? '已离开' : room.players[n - 1].connected ? '已连接' : '暂时离线';
+    const note = document.createElement('small'); note.textContent = (local ? roomUI?.isAuto(n,localGame) : room?.players[n-1]?.auto) ? '托管中' : local ? '已入座' : !room?.players[n - 1] ? '等待入座' : room.players[n - 1].gone ? '已离开' : room.players[n - 1].connected ? '已连接' : '暂时离线';
+    const rank=(g.finishOrder||[]).indexOf(n)+1;
+    if(rank) note.textContent=`第 ${rank} 名${g.planes.filter(p=>p.owner===n).every(p=>p.progress===56)?' · 已归航':''}`;
     player.append(token, name, note); $('players').append(player);
   }
   let status = '棋盘已备好', detail = '邀请朋友，开始这一局。';
   if (isSeated) {
-    if (g.status === 'finished') { status = g.winner ? `${playerName(g.winner)}获胜` : '本局结束'; detail = g.reason === 'home' ? '四架飞机全部归航，好运也靠好判断。' : g.reason === 'den' ? '成功进入对方兽穴。' : g.reason === 'blocked' ? '对方已没有合法走法。' : g.reason === 'resign' ? '一方认输，本局结束。' : '一位玩家离开，棋室已关闭。'; }
+    if (g.status === 'finished') { status = g.winner ? `${playerName(g.winner)}获胜` : '本局结束'; detail = g.reason === 'home' ? '本局排名已确定，最后一名无需继续归航。' : g.reason === 'den' ? '成功进入对方兽穴。' : g.reason === 'blocked' ? '对方已没有合法走法。' : g.reason === 'resign' ? '一方认输，本局结束。' : '一位玩家离开，棋室已关闭。'; }
     else if (!local && room.closed) { status = '棋室已关闭'; detail = '离开后可以创建新的房间。'; }
     else if (!local && !transport) { status = '正在重新连接…'; detail = '棋局已保留，恢复连接后继续。'; }
     else if (!local && !room.started) { status = allOnline() ? '棋手已齐，准备开始' : '等朋友们入座'; detail = room.yourSeat === 1 ? '分享邀请链接，人齐后点击开始。' : '请等待房主开始本局。'; }
@@ -381,6 +392,7 @@ function render() {
   if (flightMotion && g.status === 'playing' && !room?.closed) { status = '飞机行进中…'; detail = g.message; }
   if (isDiceRolling()) { status = '骰子翻滚中…'; detail = '停稳后再选择飞机。'; }
   if (jungleMotion) { status = jungleMotion.leap ? '跃过小河…' : '棋子跳跃中…'; detail = '落稳后继续行棋。'; }
+  if(autoPlaying() && g.status==='playing' && !isDiceRolling() && !flightMotion && !jungleMotion) detail='已开启托管，可随时取消。';
   $('status-title').textContent = status; $('status-detail').textContent = detail; $('board-turn').textContent = isSeated ? status : '';
   $('board-help').textContent = kind === 'flight' ? '顺时针前进 · 飞机重叠时可用编号按钮选择。' : selected ? '选择高亮格行棋。' : '象 > 狮 > 虎 > 豹 > 狼 > 狗 > 猫 > 鼠';
   $('start-button').hidden = local || !room || room.started || room.closed || room.yourSeat !== 1; $('start-button').disabled = pending || !allOnline();
@@ -399,6 +411,19 @@ function render() {
   $('reactions-panel').hidden = !isSeated; document.querySelectorAll('[data-reaction]').forEach(b => b.disabled = pending || Date.now() < nextReactionAt || (!local && (!transport || !allOnline() || room.closed)));
   $('create-button').disabled = pending; $('join-button').disabled = pending; $('copy-button').disabled = Boolean(room?.closed); renderBoard();
   syncTabletop({ kind, dice: g.dice, phase: g.phase, active: !$('flight-controls').hidden, moving: Boolean(flightMotion), pending });
+  if(kind==='flight') {
+    const actor=isDiceRolling() ? diceActor : flightMotion ? g.last?.player||g.turn : g.turn;
+    const badge=$('dice-player');badge.hidden=!isSeated;
+    badge.className='dice-player team-'+['red','yellow','blue','green'][g.colors[(g.status==='finished'&&g.winner?g.winner:actor)-1]];
+    badge.textContent=g.status==='finished' ? g.winner?`${playerName(g.winner)}获胜`:'本局结束' : `${playerName(actor)}${!local&&room?.yourSeat===actor?' · 你':''} · ${isDiceRolling()?'掷骰中':flightMotion?'飞机前进中':!local&&!room?.started?'等待开局':g.phase==='move'?'选择飞机':'掷骰回合'}`;
+    const placements=$('flight-placements');placements.replaceChildren();placements.hidden=!g.finishOrder?.length;
+    if(g.status==='finished') $('dice-hint').textContent='本局结束，名次如下。';
+    for(const [i,seat] of (g.finishOrder||[]).entries()) {
+      const item=document.createElement('li');item.className='team-'+['red','yellow','blue','green'][g.colors[seat-1]];
+      item.textContent=`第 ${i+1} 名 · ${playerName(seat)}`;placements.append(item);
+    }
+  }
+  roomUI?.sync({mode,room,transport,game:g,busy:pending||Boolean(flightMotion)||Boolean(jungleMotion)||isDiceRolling(),team:n=>({name:playerName(n),color:['red','yellow','blue','green'][colorOf(n)]})});
 }
 
 document.title = `一局 · ${title}`; document.body.classList.add(kind); document.querySelector('[data-rank-kind]').dataset.rankKind = kind;
@@ -412,7 +437,7 @@ const rules = kind === 'flight' ? [
   '飞机按骰点顺时针前进。落在自己的颜色格，向前跳 4 格一次；落在带同色飞机标记的飞跃起点，沿箭头飞跃。直接落在起点时，飞跃后再跳 4 格；先跳到起点则只飞跃。',
   '到达、跳到或飞到敌机所在格，会将该格所有敌机击回机库；飞跃会击回飞跃航线经过的对方终点跑道第三格上的飞机。经过普通格不吃子。',
   '自己的飞机可以叠放，但每次只移动一架；重叠时可用编号按钮选择。机库和起飞区不被吃子。',
-  '绕到本色入口后进入终点跑道。恰好到终点才算抵达；点数过大则在终点反弹走完余步。最先让四架飞机抵达的一方获胜，本局结束。'
+  '绕到本色入口后进入终点跑道。恰好到终点才算抵达；点数过大则在终点反弹走完余步。四架飞机全部归航后记录名次并跳过回合，其他玩家继续；只剩最后一名玩家时结束本局。第一名计一场胜利。'
 ] : [
   '红方先行，每方各有鼠、猫、狗、狼、豹、虎、狮、象八只动物。每次走一只，上下左右一格，不可斜走。',
   '大吃小，同级可以互吃。等级从大到小：象 8、狮 7、虎 6、豹 5、狼 4、狗 3、猫 2、鼠 1。鼠能吃象，象不能吃鼠。',
@@ -422,7 +447,7 @@ const rules = kind === 'flight' ? [
   '不能进入自己的兽穴。进入对方兽穴，或让对方没有合法走法，立即获胜；认输判对方胜。'
 ];
 const ol = document.createElement('ol'); for (const text of rules) { const li = document.createElement('li'); li.textContent = text; ol.append(li); } $('rules-content').append(ol);
-const note = document.createElement('p'); note.textContent = '联机双方 / 所有玩家都在线才可行动；断线暂停、刷新原页面恢复。行棋没有时间限制。结束后全员确认再来一局，轮换先手。主动离开将关闭整间棋室；2 人对局判对方胜，3～4 人中途散局不计胜场。'; $('rules-content').append(note);
+const note = document.createElement('p'); note.textContent = '仍在比赛且未托管的玩家需保持在线；断线暂停、刷新原页面恢复。已归航玩家断线不影响其他人。行棋没有时间限制，可随时开启或取消托管。结束后全员确认再来一局，轮换先手。主动离开将关闭整间棋室；2 人对局判对方胜，3～4 人中途散局不计胜场。'; $('rules-content').append(note);
 $('rules-button').onclick = () => $('rules-dialog').showModal(); document.querySelectorAll('.dialog-close').forEach(b => b.onclick = () => b.closest('dialog').close());
 $('confirm-cancel').onclick = () => $('confirm-dialog').close(); $('confirm-ok').onclick = () => { $('confirm-dialog').close(); const fn = confirmAction; confirmAction = null; fn?.(); };
 $('create-button').onclick = () => action(async () => { await profileReady; enter(await api('create', { count: Number($('player-count').value) })); });
@@ -450,7 +475,9 @@ document.querySelectorAll('[data-reaction]').forEach(b => b.onclick = () => acti
   if (mode === 'local') effect({ kind: b.dataset.reaction, from: seat() }); else await api('reaction', { kind: b.dataset.reaction });
   nextReactionAt = Date.now() + 2000; setTimeout(render, 2050);
 }));
-setupTabletop(kind); render(); await profileReady;
+setupTabletop(kind);
+roomUI=createRoomUI({kind,send:async(type,data)=>{const next=await api(type,data);if(type==='auto') apply(next);},refresh:render,playLocal:m=>{if(m.action==='roll') rollFlight(localGame,localGame.turn,localDice());else if(kind==='flight') moveFlight(localGame,localGame.turn,m.id);else moveJungle(localGame,localGame.turn,m.id,m.x,m.y);render();}});
+render(); await profileReady;
 try { const saved = JSON.parse(sessionStorage.getItem(`yiju-${kind}`) || 'null'); if (saved?.room && saved?.token) session = saved; } catch { /* Start fresh. */ }
 const invitation = params.get('room')?.toUpperCase();
 if (session) await action(async () => { try { apply(await api('sync')); connect(); if (invitation && invitation !== session.room) toast('已恢复原来的棋室，离开后可加入新房间。'); } catch (e) { if ([401, 404].includes(e.status)) clearRoom(); else connect(); throw e; } });

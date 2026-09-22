@@ -116,7 +116,10 @@ export function setupTabletop(kind) {
       const readout = document.createElement('div'); readout.className = 'dice-readout';
       const result = document.createElement('strong'); result.id = 'dice-outcome'; result.setAttribute('aria-live','polite');
       const hint = document.createElement('p'); hint.id = 'dice-hint';
-      readout.append(result, hint, $('plane-options')); shelf.append(console, readout); board.insertBefore(shelf, surface.nextSibling);
+      const actor=document.createElement('strong');actor.id='dice-player';actor.className='dice-player';actor.setAttribute('aria-live','polite');
+      turn.classList.add('dice-turn-status');
+      const placements=document.createElement('ol');placements.id='flight-placements';placements.className='flight-placements';placements.setAttribute('aria-label','本局名次');placements.setAttribute('aria-live','polite');
+      readout.append(actor,turn,result, hint, $('plane-options'),placements); shelf.append(console, readout); board.insertBefore(shelf, surface.nextSibling);
       $('flight-controls').querySelector('.dice-row').remove();
     } else $('flight-controls').hidden = true;
   }

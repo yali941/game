@@ -72,7 +72,8 @@ export function moveJungle(game, player, id, x, y) {
 export function newFlight(count = 2) {
   if (![2, 3, 4].includes(count)) throw new Error('飞行棋支持 2～4 人');
   const colors = flightColors(count);
-  return { kind: 'flight', count, colors, planes: colors.flatMap((color, i) => Array.from({ length: 4 }, (_, n) => ({ id: `${i + 1}-${n + 1}`, owner: i + 1, color, number: n + 1, progress: -1 }))), turn: 1, status: 'playing', winner: 0, reason: '', phase: 'roll', dice: 0, sixes: 0, touched: [], rolls: 0, moves: [], last: null, message: '红方先掷骰，掷出 6 点可以起飞。' };
+  const finishOrder = [];
+  return { kind: 'flight', count, colors, finishOrder, planes: colors.flatMap((color, i) => Array.from({ length: 4 }, (_, n) => ({ id: `${i + 1}-${n + 1}`, owner: i + 1, color, number: n + 1, progress: -1 }))), turn: 1, status: 'playing', winner: 0, reason: '', phase: 'roll', dice: 0, sixes: 0, touched: [], rolls: 0, moves: [], last: null, message: '红方先掷骰，掷出 6 点可以起飞。' };
 }
 // -1 hangar; 0 launch; 1..50 shared track; 51..55 home lane; 56 finished.
 export const flightIndex = (color, progress) => progress >= 1 && progress <= 50 ? (color * 13 + 3 + progress - 1) % 52 : -1;
@@ -81,7 +82,11 @@ export function flightOptions(game, player = game.turn) {
   return game.planes.filter(p => p.owner === player && p.progress < 56 && (p.progress >= 0 || game.dice === 6)).map(p => p.id);
 }
 function nextFlightTurn(game) {
-  game.turn = game.turn % game.count + 1; game.phase = 'roll'; game.sixes = 0; game.touched = [];
+  for (let i = 0; i < game.count; i++) {
+    game.turn = game.turn % game.count + 1;
+    if (!game.finishOrder.includes(game.turn)) break;
+  }
+  game.phase = 'roll'; game.sixes = 0; game.touched = [];
 }
 export function rollFlight(game, player, dice) {
   active(game, player);
@@ -125,7 +130,20 @@ export function moveFlight(game, player, id) {
   game.last = { player, id, from, to, dice, landings, captured, jumps };
   game.moves.push(game.last);
   game.message = `${FLIGHT_COLORS[plane.color]}方 ${plane.number} 号${from === -1 ? '起飞' : to === 56 ? '抵达终点' : '前进'}${jumps.length ? `，${jumps.join('、')}` : ''}${captured.length ? `，击回 ${captured.length} 架飞机` : ''}。`;
-  if (game.planes.filter(p => p.owner === player).every(p => p.progress === 56)) { game.status = 'finished'; game.winner = player; game.reason = 'home'; }
+  if (game.planes.filter(p => p.owner === player).every(p => p.progress === 56)) {
+    game.finishOrder.push(player);
+    game.message += `${FLIGHT_COLORS[plane.color]}方获得第 ${game.finishOrder.length} 名。`;
+    if (game.finishOrder.length === game.count - 1) {
+      const last = Array.from({ length: game.count }, (_, i) => i + 1).find(n => !game.finishOrder.includes(n));
+      game.finishOrder.push(last);
+      game.status = 'finished'; game.winner = game.finishOrder[0]; game.reason = 'home';
+      game.phase = 'roll'; game.sixes = 0; game.touched = [];
+      game.message += `仅剩${FLIGHT_COLORS[game.colors[last - 1]]}方，本局结束。`;
+    } else {
+      nextFlightTurn(game);
+      game.message += '其他玩家继续比赛。';
+    }
+  }
   else if (dice === 6) { game.phase = 'roll'; game.message += '掷出 6 点，继续掷骰。'; }
   else nextFlightTurn(game);
 }

@@ -1,6 +1,7 @@
 import { SIZE, newGame, playMove, resign, undoMove, agreeDraw } from './game.js';
 import { profileReady, profileHeaders, refreshRankings } from './profile.js';
 import { setupTabletop, showBoardDialog, syncTabletop } from './tabletop-ui.js';
+import { createRoomUI } from './chat-ui.js';
 
 const $ = id => document.getElementById(id);
 const svgNS = 'http://www.w3.org/2000/svg';
@@ -9,13 +10,15 @@ let transport = false, pending = false, sound = false, audioContext, toastTimer,
 let lastMoveCount = 0, confirmAction = null;
 let renderedStoneKey = '', lastRankedGame = '';
 let tentative = null, boardSnapshot = null, stoneDrop = null, stoneDropTimer;
+let roomUI;
 let lastNoticeId = null, nextReactionAt = 0, reactionTimer, feedbackTimer;
-const reactions = { poop: { emoji: '💩', label: '扔了一个大便', impact: '💩' }, heart: { emoji: '❤️', label: '送来一颗爱心', impact: '💕' }, bomb: { emoji: '💣', label: '扔了一颗炸弹', impact: '💥' } };
+const reactions = { poop: { emoji: '💩', label: '扔了一个大便', impact: '💩' }, heart: { emoji: '❤️', label: '送来一颗爱心', impact: '💕' }, bomb: { emoji: '💣', label: '扔了一颗炸弹', impact: '💥' }, cry:{emoji:'😭',label:'发来哭哭脸',impact:'😭'} };
 const cells = [], labels = 'ABCDEFGHJKLMNOP';
 const game = () => mode === 'local' ? localGame : room?.game || newGame();
 const myColor = () => mode === 'local' ? localGame.turn : room?.yourColor;
-const bothOnline = () => room?.players.every(p => p?.connected && !p.gone);
-const canPlay = () => !pending && !stoneDrop && game().status === 'playing' && (mode === 'local' || (transport && room && !room.closed && !room.request && bothOnline() && game().turn === myColor()));
+const bothOnline = () => room?.players.every(p => (p?.connected||p?.auto) && !p.gone);
+const autoPlaying = () => mode==='local' ? roomUI?.isAuto(localGame.turn,localGame) : room?.players.find(p=>p?.color===myColor())?.auto;
+const canPlay = () => !pending && !stoneDrop && !autoPlaying() && game().status === 'playing' && (mode === 'local' || (transport && room && !room.closed && !room.request && bothOnline() && game().turn === myColor()));
 
 function element(tag, attrs = {}, text = '') {
   const el = document.createElementNS(svgNS, tag);
@@ -267,12 +270,13 @@ function render() {
   }
   if (tentative) { title = `已选 ${labels[tentative[0]]}${15-tentative[1]}`; detail = '再点同一处落子，点其他位置可改选。'; }
   if (stoneDrop) { title = '棋子落下中…'; detail = '落稳后继续行棋。'; }
+  else if (autoPlaying() && g.status==='playing') { detail='已开启托管，可随时取消。'; }
   $('status-title').textContent = title; $('status-detail').textContent = detail; $('status-symbol').textContent = symbol;
   $('board-turn').textContent = seated ? title : '';
   for (const [color, key] of [[1, 'black'], [2, 'white']]) {
     const p = room?.players.find(p => p?.color === color);
     $(`${key}-name`).textContent = !local && room ? color === myColor() ? '你' : '好友' : color === 1 ? '先手' : '后手';
-    $(`${key}-state`).textContent = local ? '已入座' : p?.gone ? '已离开' : p ? p.connected ? '已入座' : '暂时离线' : '等待入座';
+    $(`${key}-state`).textContent = (local ? roomUI?.isAuto(color,localGame) : p?.auto) ? '托管中' : local ? '已入座' : p?.gone ? '已离开' : p ? p.connected ? '已入座' : '暂时离线' : '等待入座';
     $(`${key}-player`).classList.toggle('active', seated && g.status === 'playing' && g.turn === color && (local || (transport && bothOnline())));
   }
   $('game-actions').hidden = !seated;
@@ -302,6 +306,7 @@ function render() {
   $('create-button').disabled = pending; $('join-button').disabled = pending;
   $('online-tab').disabled = pending; $('local-tab').disabled = pending;
   renderBoard(); syncTabletop({ kind: 'gomoku', requestId: room?.request?.id });
+  roomUI?.sync({mode,room,transport,game:g,busy:pending||Boolean(stoneDrop),team:n=>({name:n===1?'黑棋':'白棋',color:n===1?'black':'white'})});
 }
 function move(x, y) {
   if (!canPlay()) return;
@@ -353,7 +358,9 @@ $('leave-button').addEventListener('click', () => {
 });
 $('rematch-button').addEventListener('click', () => action(async () => { if (mode === 'local') localGame = newGame(); else await api('rematch'); }));
 
-setupTabletop('gomoku'); setupBoard(); render(); await profileReady;
+setupTabletop('gomoku'); setupBoard();
+roomUI=createRoomUI({kind:'gomoku',send:async (type,data)=>{const next=await api(type,data);if(type==='auto') applyRoom(next);},refresh:render,playLocal:m=>{playMove(localGame,localGame.turn,m.x,m.y);soundMove();render();}});
+render(); await profileReady;
 try { const stored = JSON.parse(sessionStorage.getItem('yiju-session') || 'null'); if (stored?.room && stored?.token) session = stored; } catch { /* Start a fresh session. */ }
 const invitation = new URLSearchParams(location.search).get('room')?.toUpperCase();
 if (session) {
