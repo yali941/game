@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { newFlight, rollFlight, moveFlight } from '../public/table-rules.js';
-import { flightMotionSteps, sampleFlightLeg } from '../public/flight-path.js';
+import { flightMotionSteps, sampleFlightLeg, flightHeading } from '../public/flight-path.js';
 
 function itinerary(from, dice) {
   const game = newFlight(); game.planes[0].progress = from;
@@ -23,7 +23,7 @@ test('overshooting visibly reaches the finish then bounces; exact finish celebra
 });
 test('every legal progress/dice combination ends at the real move destination', () => {
   for (let from = -1; from < 56; from++) for (let dice = 1; dice <= 6; dice++) {
-    if (from === -1 && dice !== 6) continue;
+    if (from === -1 && ![2,4,6].includes(dice)) continue;
     const { game, steps } = itinerary(from, dice);
     assert.equal(steps.at(-1).to, game.last.to === 56 ? -1 : game.last.to);
     for (const step of steps) { assert.ok(step.to >= -1 && step.to <= 56); assert.ok(step.duration > 0); }
@@ -38,4 +38,19 @@ test('motion starts and lands exactly, with a higher arc and larger plane during
   assert.equal(middle.x, 40); assert.equal(middle.y, 50);
   assert.ok(middle.lift > sampleFlightLeg({ ...leg, type: 'hop' }, 400).lift);
   assert.ok(middle.scale > 1.3);
+});
+
+test('plane noses follow every travel direction, reverse on bounce and hold at rest', () => {
+  assert.equal(flightHeading([0,0],[1,0]),0);
+  assert.equal(flightHeading([0,0],[0,1]),90);
+  assert.equal(flightHeading([0,0],[-1,0]),180);
+  assert.equal(flightHeading([0,0],[0,-1]),-90);
+  for(const to of [[36,0],[0,-36],[-36,0],[0,36],[36,36],[-36,36]]) {
+    const leg={from:[0,0],to,start:0,duration:500,type:'hop'};
+    const a=sampleFlightLeg(leg,100),b=sampleFlightLeg(leg,200);
+    const heading=flightHeading(leg.from,leg.to)*Math.PI/180;
+    assert.ok((b.x-a.x)*Math.cos(heading)+(b.y-a.y)*Math.sin(heading)>0);
+    assert.equal(Math.abs(flightHeading(to,[0,0])-flightHeading([0,0],to)),180);
+  }
+  assert.equal(flightHeading([3,4],[3,4],-90),-90);
 });

@@ -42,22 +42,34 @@ test('lion/tiger river jump, both colors of rat blocking, capture and victories'
   moveJungle(h, 1, '1-3', 3, 0); assert.equal(h.reason, 'den'); assert.equal(h.winner, 1);
   assert.throws(() => moveJungle(h, 2, '2-7', 0, 1));
 });
-test('flight launch, turns and unlimited consecutive sixes without returning planes', () => {
+test('flight launch, turns and third-six penalty returns only touched planes', () => {
   const g = newFlight(4); assert.equal(g.planes.length, 16);
   rollFlight(g, 1, 3); assert.equal(g.turn, 2); assert.equal(g.phase, 'roll');
   rollFlight(g, 2, 6); assert.equal(flightOptions(g).length, 4);
   assert.throws(() => rollFlight(g, 2, 6)); assert.throws(() => moveFlight(g, 1, '1-1'));
   moveFlight(g, 2, '2-1'); assert.equal(g.planes.find(p => p.id === '2-1').progress, 0); assert.equal(g.turn, 2);
+  g.planes.find(p=>p.id==='2-3').progress=12;g.planes.find(p=>p.id==='2-4').progress=56;
   rollFlight(g, 2, 6); moveFlight(g, 2, '2-2'); rollFlight(g, 2, 6);
-  assert.equal(g.turn, 2);assert.equal(g.phase,'move');
-  assert.deepEqual(g.planes.filter(p=>p.owner===2).map(p=>p.progress),[0,0,-1,-1]);
-  moveFlight(g,2,'2-1');assert.ok(g.planes.find(p=>p.id==='2-1').progress>0);
-  for(let i=0;i<3;i++) {rollFlight(g,2,6);moveFlight(g,2,'2-1');assert.equal(g.turn,2);assert.equal(g.phase,'roll');}
-  assert.equal(g.planes.find(p=>p.id==='2-2').progress,0,'other launched plane stays out');
-  const before = JSON.stringify(g); assert.throws(() => rollFlight(g, 2, 7)); assert.equal(JSON.stringify(g), before);
-  rollFlight(g,2,1);moveFlight(g,2,'2-2');assert.equal(g.turn,3);
+  assert.equal(g.turn,3);assert.equal(g.phase,'roll');assert.equal(g.last.penalty,true);
+  assert.deepEqual(g.planes.filter(p=>p.owner===2).map(p=>p.progress),[-1,-1,12,56]);
+  assert.equal(g.sixes,0);assert.deepEqual(g.touched,[]);assert.throws(()=>moveFlight(g,2,'2-3'));
+  const before = JSON.stringify(g); assert.throws(() => rollFlight(g, 3, 7)); assert.equal(JSON.stringify(g), before);
+  rollFlight(g,3,6);moveFlight(g,3,'3-1');rollFlight(g,3,1);moveFlight(g,3,'3-1');
+  assert.equal(g.turn,4);assert.equal(g.sixes,0);assert.deepEqual(g.touched,[]);
 });
 function prepareFlight(progress, dice) { const g = newFlight(2); g.planes[0].progress = progress; rollFlight(g, 1, dice); return g; }
+test('only 2, 4 and 6 launch from hangars, and only 6 grants an extra roll', () => {
+  for(const dice of [1,2,3,4,5,6]) {
+    const g=newFlight(2);rollFlight(g,1,dice);
+    if(dice%2===0) {
+      assert.equal(flightOptions(g,1).length,4);moveFlight(g,1,'1-1');
+      assert.equal(g.planes[0].progress,0);assert.equal(g.turn,dice===6?1:2);assert.equal(g.phase,'roll');
+    } else {assert.equal(g.turn,2);assert.throws(()=>moveFlight(g,1,'1-1'));}
+  }
+  const g=newFlight(2);
+  for(const dice of [6,6,2]) {rollFlight(g,1,dice);moveFlight(g,1,'1-1');}
+  assert.equal(g.turn,2);assert.equal(g.sixes,0);assert.deepEqual(g.touched,[]);assert.ok(g.planes[0].progress>0);
+});
 test('flight jumps, chained shortcut, capture stacks and crossing home lane', () => {
   let g = prepareFlight(1, 1); moveFlight(g, 1, '1-1'); assert.equal(g.planes[0].progress, 6);
   g = prepareFlight(13, 1); moveFlight(g, 1, '1-1'); assert.equal(g.planes[0].progress, 30); assert.deepEqual(g.last.landings, [14, 18, 30]);
@@ -106,14 +118,16 @@ test('flight finishers skip turns, including sixes, and remaining players keep t
   rollFlight(g,2,1);rollFlight(g,3,1);rollFlight(g,4,1);assert.equal(g.turn,2,'no-move turn skips first finisher');
   rollFlight(g,2,1);assert.equal(g.turn,3);
   finish(3);assert.deepEqual(g.finishOrder,[1,3]);assert.equal(g.turn,4);
-  rollFlight(g,4,1);assert.equal(g.turn,2,'no-move turn skips finished seat');
+  for(let i=1;i<=2;i++) {rollFlight(g,4,6);moveFlight(g,4,`4-${i}`);}
+  rollFlight(g,4,6);assert.equal(g.turn,2,'third-six penalty skips finished seat');assert.equal(g.sixes,0);
   finish(2);assert.equal(g.status,'finished');assert.deepEqual(g.finishOrder,[1,3,2,4]);assert.equal(g.winner,1);
   assert.ok(g.planes.filter(p=>p.owner===4).some(p=>p.progress!==56));
   assert.throws(()=>rollFlight(g,4,6));assert.throws(()=>moveFlight(g,2,'2-1'));
 });
 
 test('multiplayer table API, 4 seats, reconnect, server dice, stale requests and rankings', async t => {
-  const { server, tableRooms } = createGameServer({ scoreFile: null, roll: () => 6, autoDelay:20 }); server.listen(0, '127.0.0.1'); await once(server, 'listening');
+  let nextDice=6;
+  const { server, tableRooms } = createGameServer({ scoreFile: null, roll: () => nextDice, autoDelay:20 }); server.listen(0, '127.0.0.1'); await once(server, 'listening');
   const base = `http://127.0.0.1:${server.address().port}`, controllers = [];
   t.after(async () => { controllers.forEach(c => c.abort()); server.closeAllConnections(); await new Promise(r => server.close(r)); });
   const post = async (path, body = {}, auth, profile) => { const r = await fetch(base + path, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(auth ? { Authorization: `Bearer ${auth}` } : {}), ...(profile ? { 'X-Player-Token': profile } : {}) }, body: JSON.stringify(body) }); return { status: r.status, ...await r.json() }; };
@@ -144,11 +158,17 @@ test('multiplayer table API, 4 seats, reconnect, server dice, stale requests and
   assert.equal((await call('roll')).status, 400);
   const reconnected = await events(h.code, players[3].token); await reconnected.wait(s => s.game.moves.length === 1 && s.players.every(p => p?.connected));
   assert.equal((await call('sync')).game.planes[0].progress, 0);
-  for(const id of ['1-2','1-3']) {await call('roll');assert.equal((await call('move',{id})).status,200);}
-  const consecutive=await call('sync');assert.equal(consecutive.game.turn,1);assert.equal(consecutive.game.phase,'roll');
-  assert.deepEqual(consecutive.game.planes.slice(0,4).map(p=>p.progress),[0,0,0,-1]);
+  await call('roll');await call('move',{id:'1-2'});await call('roll');
+  const consecutive=await call('sync');assert.equal(consecutive.game.turn,2);assert.equal(consecutive.game.phase,'roll');
+  assert.equal(consecutive.game.last.penalty,true);assert.deepEqual(consecutive.game.planes.slice(0,4).map(p=>p.progress),[-1,-1,-1,-1]);
+  assert.equal((await call('move',{id:'1-3'})).status,400);
+  for(const [seat,dice] of [[2,2],[3,4]]) {
+    nextDice=dice;await call('roll',{},players[seat-1]);const launched=await call('move',{id:`${seat}-1`},players[seat-1]);
+    assert.equal(launched.status,200);assert.equal(launched.game.planes.find(p=>p.id===`${seat}-1`).progress,0);assert.equal(launched.game.turn,seat+1);
+  }
+  nextDice=6;
   // Set up a final legal landing and verify only server adjudication awards it.
-  const r = tableRooms.get(h.code); r.game.planes.slice(0, 4).forEach(p => p.progress = 56); r.game.planes[0].progress = 50;
+  const r = tableRooms.get(h.code); r.game.turn=1; r.game.planes.slice(0, 4).forEach(p => p.progress = 56); r.game.planes[0].progress = 50;
   await call('roll'); const first = await call('move', { id: '1-1' });
   assert.equal(first.game.status,'playing');assert.deepEqual(first.game.finishOrder,[1]);assert.equal(first.game.turn,2);
   assert.equal((await call('auto',{enabled:true})).status,400);
