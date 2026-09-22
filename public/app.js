@@ -1,5 +1,6 @@
 import { SIZE, newGame, playMove, resign, undoMove, agreeDraw } from './game.js';
 import { profileReady, profileHeaders, refreshRankings } from './profile.js';
+import { setupTabletop, showBoardDialog, syncTabletop } from './tabletop-ui.js';
 
 const $ = id => document.getElementById(id);
 const svgNS = 'http://www.w3.org/2000/svg';
@@ -7,13 +8,14 @@ let mode = 'online', room = null, session = null, localGame = newGame(), stream 
 let transport = false, pending = false, sound = false, audioContext, toastTimer, hover = null;
 let lastMoveCount = 0, confirmAction = null;
 let renderedStoneKey = '', lastRankedGame = '';
+let tentative = null, boardSnapshot = null, stoneDrop = null, stoneDropTimer;
 let lastNoticeId = null, nextReactionAt = 0, reactionTimer, feedbackTimer;
 const reactions = { poop: { emoji: '💩', label: '扔了一个大便', impact: '💩' }, heart: { emoji: '❤️', label: '送来一颗爱心', impact: '💕' }, bomb: { emoji: '💣', label: '扔了一颗炸弹', impact: '💥' } };
 const cells = [], labels = 'ABCDEFGHJKLMNOP';
 const game = () => mode === 'local' ? localGame : room?.game || newGame();
 const myColor = () => mode === 'local' ? localGame.turn : room?.yourColor;
 const bothOnline = () => room?.players.every(p => p?.connected && !p.gone);
-const canPlay = () => !pending && game().status === 'playing' && (mode === 'local' || (transport && room && !room.closed && !room.request && bothOnline() && game().turn === myColor()));
+const canPlay = () => !pending && !stoneDrop && game().status === 'playing' && (mode === 'local' || (transport && room && !room.closed && !room.request && bothOnline() && game().turn === myColor()));
 
 function element(tag, attrs = {}, text = '') {
   const el = document.createElementNS(svgNS, tag);
@@ -30,7 +32,7 @@ function persist() {
 }
 function confirm(title, description, action, label = '确定') {
   $('confirm-title').textContent = title; $('confirm-description').textContent = description;
-  $('confirm-ok').textContent = label; confirmAction = action; $('confirm-dialog').showModal();
+  $('confirm-ok').textContent = label; confirmAction = action; showBoardDialog($('confirm-dialog'));
 }
 function soundMove() {
   if (!sound) return;
@@ -136,12 +138,12 @@ async function leaveRoom() {
 function setupBoard() {
   const board = $('board');
   const defs = element('defs');
-  for (const [id, light, dark] of [['black-stone', '#50594c', '#252c26'], ['white-stone', '#ffffff', '#eeeDE5']]) {
+  for (const [id, light, dark] of [['black-stone', '#626960', '#171e19'], ['white-stone', '#ffffff', '#d9dacb']]) {
     const gradient = element('radialGradient', { id, cx: '32%', cy: '25%', r: '75%' });
     gradient.append(element('stop', { offset: '0%', 'stop-color': light }), element('stop', { offset: '100%', 'stop-color': dark })); defs.append(gradient);
   }
   const filter = element('filter', { id: 'stone-shadow', x: '-50%', y: '-50%', width: '200%', height: '220%', 'color-interpolation-filters': 'sRGB' });
-  filter.append(element('feDropShadow', { dx: '1.5', dy: '3.5', stdDeviation: '2.3', 'flood-color': '#263021', 'flood-opacity': '.32' })); defs.append(filter); board.append(defs);
+  filter.append(element('feDropShadow', { dx: '1', dy: '4', stdDeviation: '1.8', 'flood-color': '#3d301c', 'flood-opacity': '.38' })); defs.append(filter); board.append(defs);
   for (let n = 0; n < SIZE; n++) {
     const pos = 40 + n * 40;
     board.append(element('line', { x1: 40, y1: pos, x2: 600, y2: pos, class: n === 0 || n === 14 ? 'grid-edge' : 'grid-line' }), element('line', { x1: pos, y1: 40, x2: pos, y2: 600, class: n === 0 || n === 14 ? 'grid-edge' : 'grid-line' }));
@@ -161,7 +163,8 @@ function setupBoard() {
       let [nx, ny] = [x, y];
       if (event.key === 'ArrowLeft') nx--; else if (event.key === 'ArrowRight') nx++;
       else if (event.key === 'ArrowUp') ny--; else if (event.key === 'ArrowDown') ny++;
-      else if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); move(x, y); return; } else return;
+      else if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); if (!event.repeat) move(x, y); return; }
+      else if (event.key === 'Escape') { tentative = null; render(); return; } else return;
       event.preventDefault(); nx = Math.max(0, Math.min(14, nx)); ny = Math.max(0, Math.min(14, ny));
       cell.setAttribute('tabindex', '-1'); cells[ny * SIZE + nx].setAttribute('tabindex', '0'); cells[ny * SIZE + nx].focus();
     });
@@ -171,10 +174,27 @@ function setupBoard() {
 }
 function renderHover() {
   $('hover').replaceChildren();
-  if (!hover || !canPlay()) return;
-  const [x, y] = hover;
+  if ((!tentative && !hover) || !canPlay()) return;
+  const [x, y] = tentative || hover;
   if (game().board[y * SIZE + x]) return;
-  $('hover').append(element('circle', { cx: 40 + x * 40, cy: 40 + y * 40, r: 16.5, fill: game().turn === 1 ? '#27362b' : '#fff', stroke: '#8e9b82', class: 'hover-stone' }));
+  $('hover').append(element('circle', { cx: 40 + x * 40, cy: 40 + y * 40, r: 16.5, fill: game().turn === 1 ? 'url(#black-stone)' : 'url(#white-stone)', stroke: '#8e9b82', class: tentative ? 'tentative-stone' : 'hover-stone' }));
+  if (tentative) $('hover').append(element('circle', { cx:40+x*40,cy:40+y*40,r:20,class:'tentative-ring' }));
+}
+function syncBoardInteraction() {
+  const g = game(), scope = mode === 'local' ? localGame : room ? room.code + ':' + room.round : 'lobby';
+  const signature = JSON.stringify([g.board, g.turn, g.status]);
+  const before = boardSnapshot;
+  boardSnapshot = { scope, signature, count:g.moves.length };
+  if (!before || before.scope !== scope || before.signature !== signature) {
+    tentative = null; hover = null;
+    clearTimeout(stoneDropTimer); stoneDrop = null;
+    if (!before || before.scope !== scope) renderedStoneKey = '';
+    if (before?.scope === scope && g.moves.length === before.count + 1 && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      stoneDrop = g.moves.at(-1);
+      stoneDropTimer = setTimeout(() => { stoneDrop = null; render(); }, 520);
+    }
+  }
+  if (!canPlay()) tentative = null;
 }
 function renderBoard() {
   const g = game(), stones = $('stones');
@@ -185,21 +205,30 @@ function renderBoard() {
   const pulseLine = [...g.line].sort((a, b) => Math.max(Math.abs(a[0] - last.x), Math.abs(a[1] - last.y)) - Math.max(Math.abs(b[0] - last.x), Math.abs(b[1] - last.y)));
   g.board.forEach((color, index) => {
     const x = index % SIZE, y = Math.floor(index / SIZE);
-    cells[index].setAttribute('aria-label', `${labels[x]}${15 - y}，${color ? color === 1 ? '黑棋' : '白棋' : '空位'}`);
+    const chosen = tentative?.[0] === x && tentative?.[1] === y;
+    cells[index].setAttribute('aria-label', `${labels[x]}${15 - y}，${color ? color === 1 ? '黑棋' : '白棋' : chosen ? '已预选，再点一次落子' : '空位'}`);
+    cells[index].setAttribute('aria-pressed', String(chosen));
     cells[index].setAttribute('aria-disabled', String(Boolean(color) || !canPlay()));
     if (color && redraw) {
       const order = pulseLine.findIndex(p => p[0] === x && p[1] === y);
-      stones.append(element('circle', { cx: 40 + x * 40, cy: 40 + y * 40, r: 16.5, fill: `url(#${color === 1 ? 'black' : 'white'}-stone)`, stroke: color === 2 ? '#d9ddcf' : '#252e26', 'stroke-width': '.7', class: `game-stone${order >= 0 ? ' winning-stone' : ''}`, ...(order >= 0 ? { 'data-pulse-order': order } : {}) }));
+      const stone = element('circle', { cx: 40 + x * 40, cy: 40 + y * 40, r: 16.5, fill: `url(#${color === 1 ? 'black' : 'white'}-stone)`, stroke: color === 2 ? '#d9ddcf' : '#252e26', 'stroke-width': '.7', class: `game-stone${order >= 0 ? ' winning-stone' : ''}`, ...(order >= 0 ? { 'data-pulse-order': order } : {}) });
+      if (order >= 0 && stoneDrop) stone.style.setProperty('animation-delay', (520 + order*140)+'ms', 'important');
+      if (stoneDrop?.x === x && stoneDrop?.y === y) {
+        stones.append(element('ellipse', { cx:40+x*40,cy:44+y*40,rx:17,ry:7,class:'stone-drop-shadow' }));
+        const falling = element('g', { class:'stone-drop', 'data-drop-coordinate':labels[x]+(15-y) });
+        falling.append(stone, element('circle', { cx:40+x*40,cy:40+y*40,r:3,class:'last-point' })); stones.append(falling);
+      } else stones.append(stone);
     }
   });
   if (redraw) for (const [x, y] of g.line) stones.append(element('circle', { cx: 40 + x * 40, cy: 40 + y * 40, r: 19.5, class: 'win-ring' }));
-  if (last && redraw) stones.append(element('circle', { cx: 40 + last.x * 40, cy: 40 + last.y * 40, r: 3, class: 'last-point' }));
+  if (last && redraw && !stoneDrop) stones.append(element('circle', { cx: 40 + last.x * 40, cy: 40 + last.y * 40, r: 3, class: 'last-point' }));
   $('board').classList.toggle('playable', canPlay());
   $('move-counter').replaceChildren(document.createTextNode('第 '), Object.assign(document.createElement('b'), { textContent: String(g.moves.length).padStart(2, '0') }), document.createTextNode(' 手'));
   $('coordinate').textContent = last ? `最近落子 ${labels[last.x]}${15 - last.y}` : '黑先 · 白后';
   renderHover();
 }
 function render() {
+  syncBoardInteraction();
   const local = mode === 'local', seated = local || Boolean(room), g = game();
   $('online-tab').classList.toggle('selected', !local); $('local-tab').classList.toggle('selected', local);
   $('online-tab').setAttribute('aria-pressed', String(!local)); $('local-tab').setAttribute('aria-pressed', String(local));
@@ -233,9 +262,11 @@ function render() {
     }
     else {
       title = local ? `轮到${g.turn === 1 ? '黑棋' : '白棋'}落子` : g.turn === myColor() ? '轮到你落子' : '等对手落子';
-      detail = '没有倒计时，慢慢想就好。'; symbol = g.turn === 1 ? '●' : '○';
+      detail = canPlay() ? '点一下选位，再点同一处落子。' : '没有倒计时，慢慢想就好。'; symbol = g.turn === 1 ? '●' : '○';
     }
   }
+  if (tentative) { title = `已选 ${labels[tentative[0]]}${15-tentative[1]}`; detail = '再点同一处落子，点其他位置可改选。'; }
+  if (stoneDrop) { title = '棋子落下中…'; detail = '落稳后继续行棋。'; }
   $('status-title').textContent = title; $('status-detail').textContent = detail; $('status-symbol').textContent = symbol;
   $('board-turn').textContent = seated ? title : '';
   for (const [color, key] of [[1, 'black'], [2, 'white']]) {
@@ -245,7 +276,7 @@ function render() {
     $(`${key}-player`).classList.toggle('active', seated && g.status === 'playing' && g.turn === color && (local || (transport && bothOnline())));
   }
   $('game-actions').hidden = !seated;
-  const readyForAction = seated && !pending && (local || (transport && bothOnline() && !room.closed));
+  const readyForAction = seated && !pending && !stoneDrop && (local || (transport && bothOnline() && !room.closed));
   const request = local ? null : room?.request;
   const ownRequest = request?.from === myColor();
   $('negotiation-buttons').hidden = !seated || g.status !== 'playing' || Boolean(room?.closed);
@@ -270,10 +301,13 @@ function render() {
   $('rematch-button').textContent = !local && room?.ready.includes(myColor()) ? '等待对手确认…' : '再来一局 ↻';
   $('create-button').disabled = pending; $('join-button').disabled = pending;
   $('online-tab').disabled = pending; $('local-tab').disabled = pending;
-  renderBoard();
+  renderBoard(); syncTabletop({ kind: 'gomoku', requestId: room?.request?.id });
 }
 function move(x, y) {
   if (!canPlay()) return;
+  if (game().board[y * SIZE + x]) { tentative = null; render(); return; }
+  if (tentative?.[0] !== x || tentative?.[1] !== y) { tentative = [x,y]; render(); return; }
+  tentative = null; hover = null;
   if (mode === 'local') {
     try { playMove(localGame, localGame.turn, x, y); soundMove(); render(); } catch (error) { toast(error.message); }
   } else action(async () => { await api('move', { x, y }); });
@@ -306,10 +340,10 @@ $('copy-button').addEventListener('click', async () => {
   const invite = `${location.origin}/?room=${room.code}`;
   if (location.hostname === 'localhost' || location.hostname === '127.0.0.1' || !navigator.clipboard) {
     $('share-note').textContent = location.hostname === 'localhost' || location.hostname === '127.0.0.1' ? '当前是本机地址。请先用启动窗口显示的局域网地址打开游戏，再把邀请链接发给同一 Wi-Fi 下的朋友。' : '长按或选中下方链接，复制给朋友。';
-    $('share-url').value = invite; $('share-dialog').showModal(); $('share-url').select();
+    $('share-url').value = invite; showBoardDialog($('share-dialog')); $('share-url').select();
   } else {
     try { await navigator.clipboard.writeText(invite); toast('邀请链接已复制，发给朋友吧。'); }
-    catch { $('share-note').textContent = '选中下方链接，复制给朋友。'; $('share-url').value = invite; $('share-dialog').showModal(); $('share-url').select(); }
+    catch { $('share-note').textContent = '选中下方链接，复制给朋友。'; $('share-url').value = invite; showBoardDialog($('share-dialog')); $('share-url').select(); }
   }
 });
 $('resign-button').addEventListener('click', () => confirm('这一局，先认输？', '确认后本局结束，对方获胜。', () => action(async () => { if (mode === 'local') resign(localGame, localGame.turn); else await api('resign'); }), '确认认输'));
@@ -319,7 +353,7 @@ $('leave-button').addEventListener('click', () => {
 });
 $('rematch-button').addEventListener('click', () => action(async () => { if (mode === 'local') localGame = newGame(); else await api('rematch'); }));
 
-setupBoard(); render(); await profileReady;
+setupTabletop('gomoku'); setupBoard(); render(); await profileReady;
 try { const stored = JSON.parse(sessionStorage.getItem('yiju-session') || 'null'); if (stored?.room && stored?.token) session = stored; } catch { /* Start a fresh session. */ }
 const invitation = new URLSearchParams(location.search).get('room')?.toUpperCase();
 if (session) {

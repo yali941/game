@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#f5f3ed"><meta name="description" content="一局，一起慢慢下。极简联机五子棋，落子不限时。">
-  <title>一局 · 五子棋</title><link rel="icon" href="/favicon.svg"><link rel="stylesheet" href="/style.css"><script type="module" src="/app.js"></script>
+  <title>一局 · 五子棋</title><link rel="icon" href="/favicon.svg"><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/tabletop.css"><script type="module" src="/app.js"></script>
 </head>
 <body>
   <header class="header"><a class="brand" href="/" aria-label="一局首页"><span class="brand-mark"><i></i><i></i></span><span>一局<span class="brand-dot">.</span></span><small>GOMOKU</small></a><div class="header-actions"><a id="hall-link" href="/">← 游戏大厅</a><button class="text-button" id="rules-button"><span class="help-icon">?</span> 玩法说明</button></div></header>
@@ -12,7 +12,7 @@
     <div class="game-layout">
       <section class="board-section" aria-label="五子棋对局">
         <div class="board-heading"><div class="board-title"><span class="live-dot" id="mode-dot"></span><span id="board-mode">好友对弈</span><span class="small-tag">15 × 15</span></div><span id="board-turn" class="board-turn"></span><button id="sound-button" class="sound-button" aria-pressed="false" title="开启落子音效"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M11 5 6 9H3v6h3l5 4V5Z"/><path id="sound-wave" d="m16 9 6 6m0-6-6 6"/></svg></button></div>
-        <div class="board-wrap"><svg id="board" viewBox="0 0 640 640" role="group" aria-label="15乘15五子棋棋盘，使用方向键选点，回车落子"></svg><div id="reaction-stage" aria-hidden="true"></div></div>
+        <div class="board-wrap"><svg id="board" viewBox="0 0 640 640" role="group" aria-label="15乘15五子棋棋盘，点击或回车预选，同一位置再次点击或回车确认落子，Escape取消预选"></svg><div id="reaction-stage" aria-hidden="true"></div></div>
         <div class="board-footer"><span><i class="last-marker"></i> 标记为最后落子</span><span id="move-counter">第 <b>00</b> 手</span><span id="coordinate">黑先 · 白后</span></div>
       </section>
       <aside class="sidebar">
@@ -29,7 +29,7 @@
     <footer><span>一局 · 把时间留在棋盘上</span><span>黑棋先行 <i>·</i> 五子连珠 <i>·</i> 不限时</span></footer>
   </main>
   <div id="toast" role="status" hidden></div>
-  <dialog id="rules-dialog"><button class="dialog-close" aria-label="关闭玩法说明">×</button><p class="eyebrow">THE SIMPLE RULES</p><h2>五子连珠，一局好棋。</h2><ol><li><strong>黑先白后</strong><span>在 15×15 棋盘交叉点交替落子，每次一枚，落子后不可移动。</span></li><li><strong>五子即胜</strong><span>横、竖或任一斜线，先连成五枚或更多同色棋子的一方获胜。本游戏采用常见无禁手规则。</span></li><li><strong>慢慢思考</strong><span>双方均不限时。棋盘落满仍无人连五则为和棋；认输或主动离开，判对方获胜。</span></li><li><strong>好友入座</strong><span>创建房间后分享链接或房间码。双方连接后开局，断线时暂停落子，刷新当前标签页可以重连。结束后双方点击再来一局，交换黑白。</span></li></ol><p class="dialog-footnote">联机悔棋、求和需对手同意；等待请求处理时暂停落子，申请者可取消。悔棋撤回自己最近一手，若对手已应手则一并撤回。已结束的棋局不可悔棋。互动表情每 2 秒可发送一次，不影响棋局。同屏模式由双方共同确认。</p></dialog>
+  <dialog id="rules-dialog"><button class="dialog-close" aria-label="关闭玩法说明">×</button><p class="eyebrow">THE SIMPLE RULES</p><h2>五子连珠，一局好棋。</h2><ol><li><strong>黑先白后</strong><span>在 15×15 棋盘交叉点交替落子，每次一枚。先点一下预选位置，再点同一交叉点确认落子；点其他位置可改选。落子后不可移动。</span></li><li><strong>五子即胜</strong><span>横、竖或任一斜线，先连成五枚或更多同色棋子的一方获胜。本游戏采用常见无禁手规则。</span></li><li><strong>慢慢思考</strong><span>双方均不限时。棋盘落满仍无人连五则为和棋；认输或主动离开，判对方获胜。</span></li><li><strong>好友入座</strong><span>创建房间后分享链接或房间码。双方连接后开局，断线时暂停落子，刷新当前标签页可以重连。结束后双方点击再来一局，交换黑白。</span></li></ol><p class="dialog-footnote">联机悔棋、求和需对手同意；等待请求处理时暂停落子，申请者可取消。悔棋撤回自己最近一手，若对手已应手则一并撤回。已结束的棋局不可悔棋。互动表情每 2 秒可发送一次，不影响棋局。同屏模式由双方共同确认。</p></dialog>
   <dialog id="confirm-dialog"><h2 id="confirm-title"></h2><p id="confirm-description" class="muted"></p><div class="confirm-actions"><button id="confirm-cancel" class="secondary-button">继续下棋</button><button id="confirm-ok" class="primary-button">确定</button></div></dialog>
   <dialog id="share-dialog"><button class="dialog-close" aria-label="关闭邀请链接">×</button><h2>邀请朋友入座</h2><p class="muted" id="share-note"></p><label for="share-url">邀请链接</label><input id="share-url" readonly><p class="muted compact">也可以让朋友打开相同网址，输入房间码。</p></dialog>
 </body></html>
