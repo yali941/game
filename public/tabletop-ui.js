@@ -152,7 +152,7 @@ export function syncTabletop({ kind, requestId, dice = 0, phase, active = false,
     $('dice-outcome').textContent = diceRolling ? '骰子翻滚中…' : dice ? `掷出 ${dice} 点` : '准备掷骰';
     const options = $('plane-options');
     const canChoosePlane = Boolean(options.querySelector('button:not(:disabled)'));
-    $('dice-hint').textContent = diceRolling ? '等它停稳，好运就揭晓。' : !active ? '入座开局后，点击这里掷骰。' : moving ? '飞机正在前进。' : phase === 'move' ? canChoosePlane ? '点击高亮飞机，或用编号选择。' : '等待对方移动飞机。' : diceButton.disabled ? '等待对方掷骰。' : '点击左侧骰子 · 掷出 6 点可起飞';
+    $('dice-hint').textContent = diceRolling ? '等它停稳，好运就揭晓。' : !active ? '入座开局后，点击这里掷骰。' : moving ? '飞机正在移动。' : phase === 'move' ? canChoosePlane ? '点击高亮飞机，或用编号选择。' : '等待对方移动飞机。' : diceButton.disabled ? '等待对方掷骰。' : '点击左侧骰子 · 2、4、6 点可出仓';
     options.hidden = !active || phase !== 'move' || moving || diceRolling || !canChoosePlane;
   }
 }

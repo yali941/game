@@ -1,6 +1,6 @@
 import { ANIMALS, ANIMAL_ICONS, FLIGHT_COLORS, FLIGHT_PAINTS, newTableGame, jungleTargets, moveJungle, moveFlight, rollFlight, flightOptions, flightIndex, river, denOwner, trapOwner } from './table-rules.js';
 import { profileReady, profileHeaders, refreshRankings } from './profile.js';
-import { flightMotionSteps, sampleFlightLeg } from './flight-path.js';
+import { flightMotionSteps, sampleFlightLeg, flightHeading } from './flight-path.js';
 import { addTabletopDefs, animalPortrait } from './animal-art.js';
 import { setupTabletop, showBoardDialog, syncTabletop, syncDiceState, isDiceRolling } from './tabletop-ui.js';
 import { createRoomUI } from './chat-ui.js';
@@ -216,6 +216,11 @@ function planePoint(p) {
   if (p.progress >= 51) return lanePoint(p.color, p.progress);
   return ringPoint(flightIndex(p.color, p.progress));
 }
+function planeHeading(p) {
+  if(p.progress===56) return p.color*90;
+  const next=p.progress===55 ? lanePoint(p.color,56) : planePoint({...p,progress:p.progress+1});
+  return flightHeading(planePoint(p),next,p.color*90);
+}
 function flightGlyph(x, y, size, color, angle = 0) {
   return svg('path', { d: 'M15 0 Q15 -2 10 -2 L3 -3 L-3 -13 L-6 -13 L-4 -3 L-11 -2 L-14 -6 L-16 -6 L-14 0 L-16 6 L-14 6 L-11 2 L-4 3 L-6 13 L-3 13 L3 3 L10 2 Q15 2 15 0Z', fill: flightPalette[color], transform: 'translate(' + x + ' ' + y + ') rotate(' + angle + ') scale(' + size / 32 + ')', 'pointer-events': 'none' });
 }
@@ -226,7 +231,8 @@ function syncFlightMotion() {
   flightSnapshot = { scope, moves: g.moves.length, rolls: g.rolls, planes: g.planes.map(p => ({ ...p })) };
   if (!before || before.scope !== scope || matchMedia('(prefers-reduced-motion: reduce)').matches) { flightMotion = null; return; }
   const moved = g.last?.id && g.moves.length === before.moves + 1;
-  if (!moved) return;
+  const penalty = g.last?.penalty && g.rolls === before.rolls + 1;
+  if (!moved && !penalty) return;
   const plans = new Map();
   const position = (p, progress) => progress === 56 ? lanePoint(p.color, 56) : planePoint({ ...p, progress });
   if (moved) {
@@ -244,7 +250,12 @@ function syncFlightMotion() {
       const index = flightIndex(victim.color, victim.progress);
       const impact = legs.find(leg => (leg.type === 'fly' && victim.color === (p.color + 2) % 4 && victim.progress === 53) || (last.landings.includes(leg.toProgress) && index >= 0 && flightIndex(p.color, leg.toProgress) === index));
       const delay = impact ? impact.start + impact.duration * (impact.type === 'fly' && victim.progress === 53 ? .5 : 1) : time;
-      plans.set(id, [{ from: planePoint(victim), to: airportPoint(victim.color, victim.number), start: delay, duration: 550, type: 'return' }]);
+      plans.set(id, [{ from: planePoint(victim), to: airportPoint(victim.color, victim.number), fromAngle:planeHeading(victim), start: delay, duration: 550, type: 'return' }]);
+    }
+  }
+  if (penalty) {
+    for (const p of before.planes) if (p.progress >= 0 && g.planes.find(q => q.id === p.id)?.progress === -1) {
+      plans.set(p.id, [{ from: planePoint(p), to: airportPoint(p.color, p.number), start: 0, duration: 600, type: 'return' }]);
     }
   }
   flightMotion = plans.size ? { plans, started: performance.now(), duration: Math.max(...[...plans.values()].map(legs => { const last = legs.at(-1); return last.start + last.duration; })) } : null;
@@ -256,10 +267,11 @@ function animateFlightPieces(nodes) {
   const tick = now => {
     if (flightMotion !== motion) return;
     const elapsed = now - motion.started;
-    for (const { piece, glyph, shadow, trail, legs, color } of nodes) {
+    for (const { piece, glyph, shadow, trail, legs, restAngle } of nodes) {
       const leg = legs.find(leg => elapsed < leg.start + leg.duration) || legs.at(-1);
       const point = sampleFlightLeg(leg, elapsed), airborne = Math.sin(Math.PI * point.t);
-      const flying = ['fly', 'launch', 'home', 'return'].includes(leg.type), angle = flying ? Math.atan2(leg.to[1] - leg.from[1], leg.to[0] - leg.from[0]) * 180 / Math.PI : color * 90;
+      const flying = ['fly', 'launch', 'home', 'return'].includes(leg.type);
+      const angle = elapsed < leg.start ? leg.fromAngle ?? restAngle : elapsed >= legs.at(-1).start+legs.at(-1).duration ? restAngle : flightHeading(leg.from,leg.to,restAngle);
       piece.setAttribute('transform', 'translate(' + point.x + ' ' + (point.y - point.lift) + ') scale(' + point.scale + ')');
       piece.setAttribute('data-motion', leg.type);
       glyph?.setAttribute('transform', 'translate(0 -1) rotate(' + angle + ') scale(' + 23 / 32 + ')');
@@ -333,14 +345,14 @@ function renderFlight(board) {
     top.append(svg('path',{d:'M'+(-r*.72)+' '+(-r*.52)+' Q0 '+(-r*1.15)+' '+(r*.7)+' '+(-r*.52),fill:'none',stroke:'#fff','stroke-width':1.6,'stroke-linecap':'round',opacity:.85}));
     let glyph;
     if (p.progress === 56 && !legs) top.append(svg('text', { x:0, y:5, fill:'#fffaf0', class:'plane-complete' }, '✓'));
-    else { glyph = flightGlyph(0, 0, parked ? 28 : 23, p.color, p.color * 90 - 18); glyph.setAttribute('fill', '#fffdf6'); glyph.classList.add('flight-glyph'); top.append(glyph); }
+    else { glyph = flightGlyph(0, 0, parked ? 28 : 23, p.color, planeHeading(p)); glyph.setAttribute('fill', '#fffdf6'); glyph.classList.add('flight-glyph'); top.append(glyph); }
     piece.append(top);
     piece.append(svg('circle', { cx: x + r - 2, cy: y + r - 2, r: 6.5, fill: flightPalette[p.color], stroke: '#fff', 'stroke-width': 1 }));
     piece.append(svg('text', { x: x + r - 2, y: y + r + 1, class: 'plane-number' }, String(p.number)));
     if (legs) {
       const shadow = svg('ellipse', { rx: 13, ry: 5, fill: '#244553', 'pointer-events': 'none' });
       const trail = svg('path', { fill: 'none', stroke: flightPalette[p.color], 'stroke-width': 4, 'stroke-linecap': 'round', 'pointer-events': 'none' });
-      board.append(shadow, trail); animated.push({ piece, glyph, shadow, trail, legs, color: p.color });
+      board.append(shadow, trail); animated.push({ piece, glyph, shadow, trail, legs, restAngle:planeHeading(p) });
     }
     piece.addEventListener('click', () => flyPlane(p.id)); piece.addEventListener('keydown', e => { if (['Enter', ' '].includes(e.key)) { e.preventDefault(); flyPlane(p.id); } }); board.append(piece);
   }
@@ -384,7 +396,7 @@ function render() {
     else if (!local && !allOnline()) { status = '有棋手暂时离线'; detail = '棋局已保留，等朋友回来再继续。'; }
     else { status = `轮到${local ? playerName(g.turn) : g.turn === seat() ? '你' : playerName(g.turn)}${kind === 'flight' ? g.phase === 'roll' ? '掷骰子' : '移动飞机' : '行棋'}`; detail = kind === 'flight' ? g.message : '先选己方动物，再点高亮格。不限时。'; }
   }
-  if (flightMotion && g.status === 'playing' && !room?.closed) { status = '飞机行进中…'; detail = g.message; }
+  if (flightMotion && g.status === 'playing' && !room?.closed) { status = g.last?.penalty ? '飞机返回机库…' : '飞机行进中…'; detail = g.message; }
   if (isDiceRolling()) { status = '骰子翻滚中…'; detail = '停稳后再选择飞机。'; }
   if (jungleMotion) { status = jungleMotion.leap ? '跃过小河…' : '棋子跳跃中…'; detail = '落稳后继续行棋。'; }
   if(autoPlaying() && g.status==='playing' && !isDiceRolling() && !flightMotion && !jungleMotion) detail='已开启托管，可随时取消。';
@@ -428,8 +440,8 @@ $('game-eyebrow').textContent = kind === 'flight' ? 'FLY TOGETHER. COME HOME FIR
 $('game-subtitle').textContent = kind === 'flight' ? '传统飞行棋 · 2～4 人 · 让四架飞机平安归航。' : '传统斗兽棋 · 双人对弈 · 越过小河，走进对方兽穴。';
 $('count-field').hidden = kind !== 'flight'; $('rules-title').textContent = `${title}，这样玩。`;
 const rules = kind === 'flight' ? [
-  '2～4 人，每方 4 架飞机。红方先手，之后顺时针轮流。开局采用 6 点起飞版。',
-  '掷出 6，可选一架机库内的飞机放到起飞区，或让在途飞机前进 6 格；之后再掷一次。连续掷出 6 点也可继续行动，不会将飞机送回机库。四架飞机全部归航后，轮到下一位尚未完成的玩家。',
+  '2～4 人，每方 4 架飞机。红方先手，之后顺时针轮流。掷出 2、4、6 点，可选一架机库内的飞机出仓到起飞区，或让在途飞机按点数前进；2、4 点行动后换人。',
+  '掷出 6，可选一架机库内的飞机放到起飞区，或让在途飞机前进 6 格；之后再掷一次。连续第三次掷出 6 时，本回合前两次动过的飞机返回机库，并结束回合。四架飞机全部归航后，轮到下一位尚未完成的玩家。',
   '飞机按骰点顺时针前进。落在自己的颜色格，向前跳 4 格一次；落在带同色飞机标记的飞跃起点，沿箭头飞跃。直接落在起点时，飞跃后再跳 4 格；先跳到起点则只飞跃。',
   '到达、跳到或飞到敌机所在格，会将该格所有敌机击回机库；飞跃会击回飞跃航线经过的对方终点跑道第三格上的飞机。经过普通格不吃子。',
   '自己的飞机可以叠放，但每次只移动一架；重叠时可用编号按钮选择。机库和起飞区不被吃子。',

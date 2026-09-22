@@ -1,4 +1,9 @@
 // Visual itinerary derived from the authoritative move, without changing game rules.
+export function flightHeading(from, to, fallback = 0) {
+  const dx=to[0]-from[0],dy=to[1]-from[1];
+  return dx===0 && dy===0 ? fallback : Math.atan2(dy,dx)*180/Math.PI;
+}
+
 export function flightMotionSteps(move) {
   const steps = [];
   let from = move.from;

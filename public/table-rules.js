@@ -73,28 +73,33 @@ export function newFlight(count = 2) {
   if (![2, 3, 4].includes(count)) throw new Error('飞行棋支持 2～4 人');
   const colors = flightColors(count);
   const finishOrder = [];
-  return { kind: 'flight', count, colors, finishOrder, planes: colors.flatMap((color, i) => Array.from({ length: 4 }, (_, n) => ({ id: `${i + 1}-${n + 1}`, owner: i + 1, color, number: n + 1, progress: -1 }))), turn: 1, status: 'playing', winner: 0, reason: '', phase: 'roll', dice: 0, rolls: 0, moves: [], last: null, message: '红方先掷骰，掷出 6 点可以起飞。' };
+  return { kind: 'flight', count, colors, finishOrder, planes: colors.flatMap((color, i) => Array.from({ length: 4 }, (_, n) => ({ id: `${i + 1}-${n + 1}`, owner: i + 1, color, number: n + 1, progress: -1 }))), turn: 1, status: 'playing', winner: 0, reason: '', phase: 'roll', dice: 0, sixes: 0, touched: [], rolls: 0, moves: [], last: null, message: '红方先掷骰，掷出 2、4、6 点可以出仓。' };
 }
 // -1 hangar; 0 launch; 1..50 shared track; 51..55 home lane; 56 finished.
 export const flightIndex = (color, progress) => progress >= 1 && progress <= 50 ? (color * 13 + 3 + progress - 1) % 52 : -1;
 export function flightOptions(game, player = game.turn) {
   if (game.status !== 'playing' || game.phase !== 'move' || player !== game.turn) return [];
-  return game.planes.filter(p => p.owner === player && p.progress < 56 && (p.progress >= 0 || game.dice === 6)).map(p => p.id);
+  return game.planes.filter(p => p.owner === player && p.progress < 56 && (p.progress >= 0 || [2, 4, 6].includes(game.dice))).map(p => p.id);
 }
 function nextFlightTurn(game) {
   for (let i = 0; i < game.count; i++) {
     game.turn = game.turn % game.count + 1;
     if (!game.finishOrder.includes(game.turn)) break;
   }
-  game.phase = 'roll';
+  game.phase = 'roll'; game.sixes = 0; game.touched = [];
 }
 export function rollFlight(game, player, dice) {
   active(game, player);
   if (game.phase !== 'roll') throw new Error('请先选择一架飞机移动');
   if (!Number.isInteger(dice) || dice < 1 || dice > 6) throw new Error('无效的骰子点数');
-  game.dice = dice; game.rolls++;
+  game.dice = dice; game.rolls++; game.sixes = dice === 6 ? game.sixes + 1 : 0;
+  if (game.sixes === 3) {
+    for (const p of game.planes) if (game.touched.includes(p.id)) p.progress = -1;
+    game.message = '连续三次掷出 6：本回合动过的飞机返回机库。';
+    game.last = { player, dice, penalty: true }; nextFlightTurn(game); return;
+  }
   game.phase = 'move';
-  game.message = `掷出 ${dice} 点，请选择一架飞机${dice === 6 ? '起飞或前进' : '前进'}。`;
+  game.message = `掷出 ${dice} 点，请选择一架飞机${[2, 4, 6].includes(dice) ? '出仓或前进' : '前进'}。`;
   if (!flightOptions(game).length) { game.message = `掷出 ${dice} 点，没有可移动的飞机，轮到下一位。`; nextFlightTurn(game); }
 }
 export function moveFlight(game, player, id) {
@@ -121,6 +126,7 @@ export function moveFlight(game, player, id) {
     to += 4; land(to); jumps.push('跳格'); if (to === 18) fly();
   }
   plane.progress = to;
+  if (dice === 6 && !game.touched.includes(id)) game.touched.push(id);
   game.last = { player, id, from, to, dice, landings, captured, jumps };
   game.moves.push(game.last);
   game.message = `${FLIGHT_COLORS[plane.color]}方 ${plane.number} 号${from === -1 ? '起飞' : to === 56 ? '抵达终点' : '前进'}${jumps.length ? `，${jumps.join('、')}` : ''}${captured.length ? `，击回 ${captured.length} 架飞机` : ''}。`;
@@ -131,7 +137,7 @@ export function moveFlight(game, player, id) {
       const last = Array.from({ length: game.count }, (_, i) => i + 1).find(n => !game.finishOrder.includes(n));
       game.finishOrder.push(last);
       game.status = 'finished'; game.winner = game.finishOrder[0]; game.reason = 'home';
-      game.phase = 'roll';
+      game.phase = 'roll'; game.sixes = 0; game.touched = [];
       game.message += `仅剩${FLIGHT_COLORS[game.colors[last - 1]]}方，本局结束。`;
     } else {
       nextFlightTurn(game);
