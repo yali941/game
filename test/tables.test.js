@@ -42,15 +42,20 @@ test('lion/tiger river jump, both colors of rat blocking, capture and victories'
   moveJungle(h, 1, '1-3', 3, 0); assert.equal(h.reason, 'den'); assert.equal(h.winner, 1);
   assert.throws(() => moveJungle(h, 2, '2-7', 0, 1));
 });
-test('flight launch, turns, trusted dice and triple-six penalty', () => {
+test('flight launch, turns and unlimited consecutive sixes without returning planes', () => {
   const g = newFlight(4); assert.equal(g.planes.length, 16);
   rollFlight(g, 1, 3); assert.equal(g.turn, 2); assert.equal(g.phase, 'roll');
   rollFlight(g, 2, 6); assert.equal(flightOptions(g).length, 4);
   assert.throws(() => rollFlight(g, 2, 6)); assert.throws(() => moveFlight(g, 1, '1-1'));
   moveFlight(g, 2, '2-1'); assert.equal(g.planes.find(p => p.id === '2-1').progress, 0); assert.equal(g.turn, 2);
   rollFlight(g, 2, 6); moveFlight(g, 2, '2-2'); rollFlight(g, 2, 6);
-  assert.equal(g.turn, 3); assert.ok(g.planes.filter(p => p.owner === 2).every(p => p.progress === -1));
-  const before = JSON.stringify(g); assert.throws(() => rollFlight(g, 3, 7)); assert.equal(JSON.stringify(g), before);
+  assert.equal(g.turn, 2);assert.equal(g.phase,'move');
+  assert.deepEqual(g.planes.filter(p=>p.owner===2).map(p=>p.progress),[0,0,-1,-1]);
+  moveFlight(g,2,'2-1');assert.ok(g.planes.find(p=>p.id==='2-1').progress>0);
+  for(let i=0;i<3;i++) {rollFlight(g,2,6);moveFlight(g,2,'2-1');assert.equal(g.turn,2);assert.equal(g.phase,'roll');}
+  assert.equal(g.planes.find(p=>p.id==='2-2').progress,0,'other launched plane stays out');
+  const before = JSON.stringify(g); assert.throws(() => rollFlight(g, 2, 7)); assert.equal(JSON.stringify(g), before);
+  rollFlight(g,2,1);moveFlight(g,2,'2-2');assert.equal(g.turn,3);
 });
 function prepareFlight(progress, dice) { const g = newFlight(2); g.planes[0].progress = progress; rollFlight(g, 1, dice); return g; }
 test('flight jumps, chained shortcut, capture stacks and crossing home lane', () => {
@@ -73,7 +78,8 @@ test('flight bounce, exact landing, victory and no moves after finish', () => {
 });
 test('2, 3 and 4 player full flight games reach a legal winner', () => {
   let seed = 932401;
-  const rand = () => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed; };
+  // Use the upper bits: alternating roll/choice draws make LCG low bits repeat.
+  const rand = () => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed >>> 8; };
   for (const count of [2, 3, 4]) {
     const g = newFlight(count);
     for (let i = 0; g.status === 'playing' && i < 50000; i++) {
@@ -95,12 +101,12 @@ test('flight finishers skip turns, including sixes, and remaining players keep t
     g.planes.find(p=>p.owner===seat).progress=50;
     rollFlight(g,seat,6);moveFlight(g,seat,`${seat}-1`);
   };
-  finish(1);assert.equal(g.status,'playing');assert.deepEqual(g.finishOrder,[1]);assert.equal(g.turn,2);assert.equal(g.sixes,0);
+  finish(1);assert.equal(g.status,'playing');assert.deepEqual(g.finishOrder,[1]);assert.equal(g.turn,2);assert.equal(g.phase,'roll');
   assert.throws(()=>rollFlight(g,1,6));assert.deepEqual(flightOptions(g,1),[]);
   rollFlight(g,2,1);rollFlight(g,3,1);rollFlight(g,4,1);assert.equal(g.turn,2,'no-move turn skips first finisher');
-  g.sixes=2;rollFlight(g,2,6);assert.equal(g.turn,3);
+  rollFlight(g,2,1);assert.equal(g.turn,3);
   finish(3);assert.deepEqual(g.finishOrder,[1,3]);assert.equal(g.turn,4);
-  g.sixes=2;rollFlight(g,4,6);assert.equal(g.turn,2,'triple six skips finished seat');
+  rollFlight(g,4,1);assert.equal(g.turn,2,'no-move turn skips finished seat');
   finish(2);assert.equal(g.status,'finished');assert.deepEqual(g.finishOrder,[1,3,2,4]);assert.equal(g.winner,1);
   assert.ok(g.planes.filter(p=>p.owner===4).some(p=>p.progress!==56));
   assert.throws(()=>rollFlight(g,4,6));assert.throws(()=>moveFlight(g,2,'2-1'));
@@ -138,8 +144,11 @@ test('multiplayer table API, 4 seats, reconnect, server dice, stale requests and
   assert.equal((await call('roll')).status, 400);
   const reconnected = await events(h.code, players[3].token); await reconnected.wait(s => s.game.moves.length === 1 && s.players.every(p => p?.connected));
   assert.equal((await call('sync')).game.planes[0].progress, 0);
+  for(const id of ['1-2','1-3']) {await call('roll');assert.equal((await call('move',{id})).status,200);}
+  const consecutive=await call('sync');assert.equal(consecutive.game.turn,1);assert.equal(consecutive.game.phase,'roll');
+  assert.deepEqual(consecutive.game.planes.slice(0,4).map(p=>p.progress),[0,0,0,-1]);
   // Set up a final legal landing and verify only server adjudication awards it.
-  const r = tableRooms.get(h.code); r.game.planes.slice(0, 4).forEach(p => p.progress = 56); r.game.planes[0].progress = 50; r.game.sixes = 0;
+  const r = tableRooms.get(h.code); r.game.planes.slice(0, 4).forEach(p => p.progress = 56); r.game.planes[0].progress = 50;
   await call('roll'); const first = await call('move', { id: '1-1' });
   assert.equal(first.game.status,'playing');assert.deepEqual(first.game.finishOrder,[1]);assert.equal(first.game.turn,2);
   assert.equal((await call('auto',{enabled:true})).status,400);

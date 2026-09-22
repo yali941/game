@@ -43,6 +43,16 @@ for(const kind of ['gomoku','flight','jungle']) test(`${kind}: chat isolation an
   const sync=await post('sync',{room:a.code},b.token);assert.equal(sync.chat[0].playerId,profileA.id);assert.equal(sync.chat[0].name,'红玩家');assert.equal(sync.chat[0].text,text);
   assert.equal(sync.players[0].id,profileA.id);assert.ok(!JSON.stringify(sync).includes(a.token));
   assert.equal((await post('chat',{room:a.code,text:'spam'},a.token)).status,400);
+  const version=room.version,oldId=sync.players[0].id;
+  const renamed=await post('profile',{name:'竹叶棋友'},null,profileA.token);
+  assert.equal(renamed.id,oldId);
+  await wait(()=>first.frames.some(f=>f.includes('竹叶棋友')) && second.frames.some(f=>f.includes('竹叶棋友')));
+  const updated=await post('sync',{room:a.code},b.token);
+  assert.equal(updated.players[0].name,'竹叶棋友');assert.equal(updated.players[0].id,oldId);
+  assert.equal(updated.players[1].name,'蓝玩家');assert.equal(updated.chat[0].name,'竹叶棋友');
+  assert.equal(updated.chat[0].playerId,oldId);assert.equal(updated.chat[0].text,text);assert.equal(room.version,version);
+  const board=await (await fetch(`${base}/api/rankings?kind=${kind}`,{headers:{'X-Player-Token':profileA.token}})).json();
+  assert.equal(board.me.name,updated.players[0].name);assert.equal(board.me.id,oldId);
   assert.equal((await post('chat',{room:a.code,text:'attack'},other.token)).status,401);
   assert.equal((await post('sync',{room:other.code},other.token)).chat.length,0);
   second.c.abort();const recovered=await stream(b.token);await wait(()=>recovered.frames.some(f=>f.includes('你好😭')));
