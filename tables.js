@@ -2,22 +2,40 @@ import { randomBytes, randomInt } from 'node:crypto';
 import { newTableGame, moveJungle, moveFlight, rollFlight } from './public/table-rules.js';
 import { identifyPlayer, publicPlayer, updateRoomProfile, addChat, setAuto, createAutoScheduler } from './room-tools.js';
 
-export function createTableService({ roll = () => randomInt(1, 7), records, autoDelay } = {}) {
+export const UNLUCKY_WEIGHTS = Object.freeze([35, 10, 25, 10, 15, 5]);
+export function unluckyDice(ticket) {
+  if (!Number.isInteger(ticket) || ticket < 0 || ticket >= 100) throw new Error('Invalid dice ticket');
+  let boundary = 0;
+  for (let i = 0; i < UNLUCKY_WEIGHTS.length; i++) {
+    boundary += UNLUCKY_WEIGHTS[i];
+    if (ticket < boundary) return i + 1;
+  }
+}
+
+export function createTableService({ roll = () => randomInt(1, 7), records, autoDelay, unluckyName = '芽卫兵', luckTicket = () => randomInt(100) } = {}) {
+  const targetName = unluckyName.trim();
+  const affected = p => Boolean(targetName && p?.name === targetName);
+  const dicePolicy = r => r.kind === 'flight' && r.diceMode === 'unlucky' ? { mode: 'unlucky', name: targetName, weights: UNLUCKY_WEIGHTS, seats: r.players.filter(p => p && !p.gone && affected(p)).map(p => p.seat) } : null;
+  const throwDice = (r, p) => {
+    const unlucky = r.diceMode === 'unlucky' && affected(p);
+    rollFlight(r.game, p.seat, unlucky ? unluckyDice(luckTicket()) : roll());
+    if (unlucky) r.game.rollHistory.at(-1).luck = 'unlucky';
+  };
   const rooms = new Map();
   const connected = p => Boolean(p && !p.gone && p.streams.size);
-  const snapshot = (r, p) => ({ code: r.code, kind: r.kind, count: r.count, yourSeat: p.seat, host: 1, game: r.game, started: r.started, closed: r.closed, ready: r.ready, round: r.round, version: r.version, seq: r.seq, chat:r.chat||[], players: r.players.map(p => p ? { ...publicPlayer(p), seat: p.seat, connected: connected(p), gone: p.gone } : null) });
+  const snapshot = (r, p) => ({ code: r.code, kind: r.kind, count: r.count, yourSeat: p.seat, host: 1, game: r.game, dicePolicy: dicePolicy(r), started: r.started, closed: r.closed, ready: r.ready, round: r.round, version: r.version, seq: r.seq, chat:r.chat||[], players: r.players.map(p => p ? { ...publicPlayer(p), seat: p.seat, connected: connected(p), gone: p.gone } : null) });
   const availablePlayer=p=>Boolean(p && !p.gone && (connected(p)||p.auto));
   const finishedSeat=(r,p)=>Boolean(p && r.game.finishOrder?.includes(p.seat));
   const readyPlayers=r=>r.players.every(p=>availablePlayer(p) || (r.game.status==='playing' && finishedSeat(r,p)));
   const broadcast = r => {
     for(const p of r.players) if(finishedSeat(r,p)) p.auto=false;
-    records?.victory(r, r.kind, p => p.seat);
+    if (r.diceMode !== 'unlucky') records?.victory(r, r.kind, p => p.seat);
     r.updatedAt = Date.now(); r.seq++;
     for (const p of r.players) if (p) for (const s of p.streams) s.write(`data: ${JSON.stringify(snapshot(r, p))}\n\n`);
     auto.sync(r);
   };
   const auto=createAutoScheduler({delay:autoDelay,ready:r=>!r.closed && r.started && r.game.status==='playing' && readyPlayers(r),execute:(r,p,m)=>{
-    if(m.action==='roll') rollFlight(r.game,p.seat,roll());
+    if(m.action==='roll') throwDice(r,p);
     else if(r.kind==='flight') moveFlight(r.game,p.seat,m.id);
     else moveJungle(r.game,p.seat,m.id,m.x,m.y);
     r.version++;
@@ -40,11 +58,14 @@ export function createTableService({ roll = () => randomInt(1, 7), records, auto
     if (req.method !== 'POST') return send(res, 404, { error: '未知操作' });
     if (action === 'create') {
       if (!['flight', 'jungle'].includes(data.kind)) throw new Error('请选择飞行棋或斗兽棋');
+      const diceMode = data.diceMode ?? 'fair';
+      if (!['fair', 'unlucky'].includes(diceMode) || (data.kind !== 'flight' && diceMode !== 'fair')) throw new Error('请选择有效的飞行棋模式');
       const count = data.kind === 'jungle' ? 2 : data.count ?? 2;
       if (![2, 3, 4].includes(count)) throw new Error('请选择 2～4 人');
       if (rooms.size >= 500) throw new Error('棋室暂时已满');
       let code; do { code = Array.from(randomBytes(6), b => alphabet[b % alphabet.length]).join(''); } while (rooms.has(code));
       const p = seat(1), r = { code, kind: data.kind, count, players: [p, ...Array(count - 1).fill(null)], game: newTableGame(data.kind, count), started: false, closed: false, ready: [], round: 1, version: 0, seq: 0, updatedAt: Date.now() };
+      r.diceMode = diceMode;
       identifyPlayer(p,records?.lookup(req));
       rooms.set(code, r); return send(res, 200, { token: p.token, ...snapshot(r, p) });
     }
@@ -92,7 +113,7 @@ export function createTableService({ roll = () => randomInt(1, 7), records, auto
     else if (action === 'roll') {
       if (r.kind !== 'flight') throw new Error('斗兽棋不使用骰子');
       // Clients never supply or influence the online dice result.
-      rollFlight(r.game, p.seat, roll());
+      throwDice(r, p);
     } else if (action === 'move') {
       if (r.kind === 'flight') moveFlight(r.game, p.seat, data.id);
       else moveJungle(r.game, p.seat, data.id, data.x, data.y);
