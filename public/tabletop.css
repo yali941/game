@@ -82,3 +82,93 @@ body.tabletop.flight #dice.dice-cube{--dice-size:44px;--dice-half:22px;display:b
 .flight .dice-readout .reaction-buttons{justify-content:flex-start;flex-wrap:wrap;gap:8px}
 .flight .dice-readout .reaction-buttons button{width:36px;min-height:36px;height:36px;flex:0 0 36px}
 @media(max-width:700px){.flight-toolbar{padding:12px 14px 0;gap:7px}.flight-toolbar #start-button,.flight-toolbar #rematch-button{padding:9px 11px}.flight .dice-shelf{align-items:flex-start}.flight .dice-readout .reaction-buttons{display:grid;grid-template-columns:repeat(2,36px);gap:8px}}
+
+/* Mobile: the board stays on the page; social and room panels open on demand. */
+.mobile-nav,.mobile-sheet{display:none}
+@media(max-width:700px){
+  body.mobile-layout{padding-bottom:calc(76px + env(safe-area-inset-bottom));min-height:100dvh}
+  body.mobile-sheet-open{position:fixed;top:var(--mobile-scroll);left:0;right:0;overflow:hidden}
+  .mobile-layout .header,.mobile-layout .club-header{height:52px;min-height:52px;margin:0 14px;padding:0;border-bottom:0}
+  .mobile-layout main,.mobile-layout .table-main{margin:0 10px;padding:0}
+  .mobile-layout .intro,.mobile-layout .table-intro{padding:6px 4px 12px;min-height:0}
+  .mobile-layout .intro h1,.mobile-layout .table-intro h1{font-size:21px;letter-spacing:1px}
+  .mobile-layout .intro .eyebrow,.mobile-layout .table-intro .overline,.mobile-layout .subtitle,.mobile-layout #game-subtitle,.mobile-layout .intro-note,.mobile-layout .no-timer{display:none}
+  .mobile-layout .sidebar,.mobile-layout .table-sidebar,.mobile-layout footer{display:none}
+  .mobile-layout .board-heading,.mobile-layout .table-board-top{min-height:34px;padding:7px 12px}
+  .mobile-layout .board-status{flex-direction:column;align-items:stretch;padding:9px 12px;gap:7px}
+  .mobile-layout .board-status .table-players,.mobile-layout .board-status .players{display:flex;flex-direction:row;justify-content:space-between;gap:7px;width:100%;min-width:0}
+  .mobile-layout .board-status .table-player{display:grid;grid-template-columns:18px minmax(0,1fr);gap:2px 5px;align-items:center;min-width:0;flex:1;text-align:left}
+  .mobile-layout .board-status .player-token{width:18px;height:18px;font-size:12px;margin:0}
+  .mobile-layout .board-status .table-player>span:not(.player-token){overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px}
+  .mobile-layout .board-status .table-player small{grid-column:2;font-size:8px;line-height:1.3;margin:0}
+  .mobile-layout .board-status .player{min-width:0;flex-direction:row;gap:6px;flex-wrap:wrap}
+  .mobile-layout .board-status .player .stone{width:18px;height:18px;margin:0}
+  .mobile-layout .board-status .player.active:before{display:none}
+  .mobile-layout .board-status .player.active strong{color:#354f2b}
+  .mobile-layout .board-status .player strong small{font-size:9px;margin-left:3px}
+  .mobile-layout .board-status .player-state{display:none}
+  .mobile-layout .board-status .versus{padding:0;align-self:center}
+  .mobile-layout .board-status .turn-status,.mobile-layout .board-status .turn-box{max-width:100%;min-height:0;text-align:left}
+  .mobile-layout .board-status #status-detail{max-width:none;margin:2px 0 0}
+  .mobile-layout .flight-toolbar{padding:6px 12px 0;gap:6px}
+  .mobile-layout .flight-toolbar .auto-controls{gap:5px}
+  .mobile-layout .flight-toolbar button{min-height:40px}
+  .mobile-layout .board-dock{padding:10px 12px;gap:9px}
+  .mobile-layout .board-dock .auto-controls{padding:0}
+  .mobile-layout .board-dock #game-actions:has(>.action-row:empty):not(:has(button:not([hidden]))){display:none}
+  body.mobile-layout.flight #board-wrap{margin:4px 8px 12px}
+  .mobile-layout.flight .dice-shelf{margin:15px 12px 8px;gap:13px}
+  body.mobile-layout.flight #board-dice{flex-basis:106px;width:106px;height:112px;border-width:5px}
+  .mobile-layout .dice-tray-label{font-size:8px;left:9px;top:7px}
+  .mobile-layout .dice-readout .dice-player{font-size:10px;padding:4px 6px;margin-bottom:5px}
+  .mobile-layout .dice-readout .dice-turn-status{margin-bottom:4px}
+  .mobile-layout .dice-readout #dice-outcome{font-size:14px;line-height:1.4}
+  .mobile-layout .dice-readout #dice-hint{font-size:10px;line-height:1.5;margin:3px 0 0}
+  .mobile-layout.flight .dice-readout .board-reactions{margin-top:7px;padding-top:7px}
+  .mobile-layout.flight .dice-readout .reaction-buttons{display:flex;gap:6px}
+  .mobile-layout.flight .dice-readout .reaction-buttons button{width:36px;min-height:40px;height:40px;flex-basis:36px}
+  .mobile-nav{position:fixed;z-index:25;bottom:0;left:0;right:0;display:flex;padding:7px 12px calc(7px + env(safe-area-inset-bottom));gap:6px;border-top:1px solid #d9decd;background:#faf9f0f5;backdrop-filter:blur(14px);box-shadow:0 -5px 24px #3041250a}
+  .mobile-nav>button{position:relative;flex:1;display:flex;align-items:center;justify-content:center;gap:7px;min-height:44px;border:0;border-radius:10px;background:transparent;color:#526746;font-size:13px;font-weight:600}
+  .mobile-nav>button:first-child{background:#e7eddc}
+  .mobile-nav>button>span{font-size:19px;line-height:1}
+  #mobile-unread{min-width:18px;height:18px;border-radius:10px;background:#b95141;color:#fff;padding:0 4px;font:11px/18px system-ui;text-align:center}
+  .tabletop .mobile-sheet[open]{display:flex;flex-direction:column;position:fixed;inset:auto 0 var(--mobile-keyboard,0px);margin:0;width:100%;max-width:none;height:min(58dvh,var(--mobile-view-height,100dvh));max-height:var(--mobile-view-height,100dvh);padding:0 0 env(safe-area-inset-bottom);border:1px solid #d4dac8;border-bottom:0;border-radius:20px 20px 0 0;background:#f9f8ef;color:#42543a;box-shadow:0 -12px 50px #273b2825;overflow:hidden;animation:mobile-sheet-in .18s ease-out}
+  .tabletop .mobile-sheet.expanded[open]{height:calc(var(--mobile-view-height,100dvh) - 20px)}
+  .tabletop .mobile-sheet.keyboard-open[open]{height:var(--mobile-view-height,100dvh);border-radius:12px 12px 0 0;padding-bottom:5px}
+  .mobile-sheet::backdrop{background:#26372438;backdrop-filter:none}
+  .mobile-sheet-header{flex:none;padding:8px 16px 9px;touch-action:none;border-bottom:1px solid #e1e4d7}
+  .mobile-grip{width:32px;height:4px;background:#c7cebb;border-radius:9px;margin:0 auto 7px}
+  .mobile-sheet-header>div:last-child{display:flex;align-items:center;gap:10px}
+  .mobile-sheet-header h2{font:600 16px/1.5 'Microsoft YaHei',sans-serif;flex:1;margin:0}
+  .mobile-sheet-header button{min-width:44px;min-height:36px;border:0;background:none;color:#617653;font-size:12px;padding:6px}
+  .mobile-sheet-body{min-height:0;flex:1;overflow-y:auto;overscroll-behavior:contain;padding:12px 16px 16px}
+  .mobile-sheet-body>[data-content]{min-width:0}
+  .mobile-sheet[data-pane=chat] .mobile-sheet-body{display:flex;overflow:hidden;padding:0 16px 8px}
+  .mobile-sheet [data-content=chat]{display:flex;flex:1;min-height:0}
+  .tabletop .mobile-sheet .chat-panel{display:flex;flex-direction:column;width:100%;min-height:0;padding:10px 0 0;border:0;box-shadow:none;background:none}
+  .mobile-sheet .chat-panel h2{display:none}
+  .mobile-sheet .chat-identity{flex:none;margin:0 0 6px;font-size:10px}
+  .mobile-sheet .chat-members{display:flex;flex-wrap:wrap;gap:5px;flex:none;margin-bottom:7px;max-height:60px;overflow:auto}
+  .mobile-sheet .chat-member{padding:4px 6px;min-width:0;max-width:100%}
+  .mobile-sheet .chat-member strong{font-size:10px;overflow-wrap:anywhere}
+  .mobile-sheet .chat-messages{flex:1;min-height:35px;height:auto;margin:0 0 9px;padding:0 3px 0 0;scrollbar-width:thin}
+  .mobile-sheet .chat-message{margin:0 0 10px;padding-left:0}
+  .mobile-sheet .chat-message p{font-size:13px;line-height:1.55;padding:8px 10px}
+  .mobile-sheet .chat-message strong{display:inline;margin:0}
+  .mobile-sheet .chat-form{flex:none}
+  .mobile-sheet input,.mobile-sheet select,.mobile-sheet textarea,.mobile-sheet .chat-form input{font-size:16px}
+  .mobile-sheet .chat-form button{min-width:54px;min-height:44px}
+  .mobile-sheet .chat-status{flex:none;font-size:10px;min-height:0;margin:5px 0 0}
+  .mobile-sheet .chat-status:empty{display:none}
+  .mobile-sheet .panel,.mobile-sheet .club-panel{padding:15px;margin:10px 0 0;background:#fffdf5;box-shadow:none}
+  .mobile-sheet .mode-tabs{display:flex;margin:0 0 12px}
+  .mobile-sheet .mode-tabs button{min-height:44px}
+  .mobile-sheet #rules-button,.mobile-sheet #leave-button{display:block;width:100%;min-height:44px;border:1px solid #d9dfcd;border-radius:8px;background:#f1f3e7;text-align:left;padding:12px;font-size:13px}
+  .mobile-sheet #leave-button{margin-top:16px;color:#9b5647;background:#fcf3e9;border-color:#e7d8ca}
+  .mobile-local-note{font-size:13px;line-height:1.8;color:#7a876c}
+  #mobile-turn{flex:none;border:0;border-bottom:1px solid #cbd8be;background:#e5efd9;color:#3c612f;padding:10px 16px;min-height:40px;text-align:left;font-size:12px;font-weight:600}
+  .mobile-sheet .rank-list li{padding-left:0}
+  .mobile-sheet .dice-policy{font-size:12px}
+}
+@keyframes mobile-sheet-in{from{transform:translateY(35px);opacity:.6}to{transform:translateY(0);opacity:1}}
+@media(prefers-reduced-motion:reduce){.tabletop .mobile-sheet[open]{animation:none}}

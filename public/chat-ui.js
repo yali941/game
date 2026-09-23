@@ -1,5 +1,6 @@
 import { chooseAutoMove } from './auto-play.js';
 import { refreshRankings } from './profile.js';
+import { createMobileUI } from './mobile-ui.js';
 
 export function createRoomUI({kind,send,refresh,playLocal}) {
   const panel=document.createElement('section');panel.className='panel club-panel chat-panel';panel.setAttribute('aria-label','棋室聊天');
@@ -10,6 +11,7 @@ export function createRoomUI({kind,send,refresh,playLocal}) {
   if(kind==='flight') document.getElementById('game-actions').before(controls);
   else document.querySelector('.board-dock').append(controls);
   const el=id=>panel.querySelector('#'+id);
+  const mobileUI=createMobileUI(panel);
   let state,scope,lastMessages='',lastPlayers='',sending=false,changing=false,timer=null,taskKey='',localAuto=new Set();
   document.querySelectorAll('dialog').forEach(dialog=>dialog.addEventListener('close',refresh));
   const isAuto=seat=>state?.mode==='local' ? localAuto.has(seat) : Boolean(state?.room?.players.find(p=>p && (p.seat||p.color)===seat)?.auto);
@@ -24,6 +26,7 @@ export function createRoomUI({kind,send,refresh,playLocal}) {
   });
   function sync(next) {
     state=next;
+    mobileUI.sync(next);
     const {mode,room,transport,game,team,busy}=next,local=mode==='local';
     const nextScope=local ? game : room?.code||'lobby';
     if(scope!==nextScope) {scope=nextScope;localAuto.clear();cancel();lastMessages='';el('chat-input').value='';el('chat-status').textContent='';}
