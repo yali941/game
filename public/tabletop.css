@@ -84,7 +84,7 @@ body.tabletop.flight #dice.dice-cube{--dice-size:44px;--dice-half:22px;display:b
 @media(max-width:700px){.flight-toolbar{padding:12px 14px 0;gap:7px}.flight-toolbar #start-button,.flight-toolbar #rematch-button{padding:9px 11px}.flight .dice-shelf{align-items:flex-start}.flight .dice-readout .reaction-buttons{display:grid;grid-template-columns:repeat(2,36px);gap:8px}}
 
 /* Mobile: the board stays on the page; social and room panels open on demand. */
-.mobile-nav,.mobile-sheet{display:none}
+.mobile-nav,.mobile-sheet,.mobile-live-chat{display:none}
 @media(max-width:700px){
   body.mobile-layout{padding-bottom:calc(76px + env(safe-area-inset-bottom));min-height:100dvh}
   body.mobile-sheet-open{position:fixed;top:var(--mobile-scroll);left:0;right:0;overflow:hidden}
@@ -132,6 +132,13 @@ body.tabletop.flight #dice.dice-cube{--dice-size:44px;--dice-half:22px;display:b
   .mobile-nav>button:first-child{background:#e7eddc}
   .mobile-nav>button>span{font-size:19px;line-height:1}
   #mobile-unread{min-width:18px;height:18px;border-radius:10px;background:#b95141;color:#fff;padding:0 4px;font:11px/18px system-ui;text-align:center}
+  .mobile-layout .mobile-live-chat{display:flex;position:fixed;left:max(12px,env(safe-area-inset-left));bottom:calc(76px + env(safe-area-inset-bottom));z-index:20;width:min(68vw,270px);max-height:156px;flex-direction:column;align-items:flex-start;gap:5px;overflow:hidden;pointer-events:none;user-select:none}
+  .mobile-live-chat,.mobile-live-chat *{pointer-events:none!important}
+  .mobile-live-message{max-width:100%;flex:none;padding:6px 9px;border-radius:5px 10px 10px 5px;border-left:3px solid var(--team);background:#1f2c28a3;color:#fffef8;font-size:12px;line-height:1.5;box-shadow:0 2px 6px #172a1912;text-shadow:0 1px 2px #0005;animation:mobile-message-in .2s ease-out}
+  .mobile-live-message:nth-last-child(2){opacity:.8}.mobile-live-message:nth-last-child(n+3){opacity:.6}
+  .mobile-live-line{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;overflow-wrap:anywhere;white-space:pre-wrap}
+  .mobile-live-line strong{font-weight:600;color:var(--team-tint)}
+  .mobile-layout:has(dialog[open]) .mobile-live-chat{visibility:hidden}
   .tabletop .mobile-sheet[open]{display:flex;flex-direction:column;position:fixed;inset:auto 0 var(--mobile-keyboard,0px);margin:0;width:100%;max-width:none;height:min(58dvh,var(--mobile-view-height,100dvh));max-height:var(--mobile-view-height,100dvh);padding:0 0 env(safe-area-inset-bottom);border:1px solid #d4dac8;border-bottom:0;border-radius:20px 20px 0 0;background:#f9f8ef;color:#42543a;box-shadow:0 -12px 50px #273b2825;overflow:hidden;animation:mobile-sheet-in .18s ease-out}
   .tabletop .mobile-sheet.expanded[open]{height:calc(var(--mobile-view-height,100dvh) - 20px)}
   .tabletop .mobile-sheet.keyboard-open[open]{height:var(--mobile-view-height,100dvh);border-radius:12px 12px 0 0;padding-bottom:5px}
@@ -171,4 +178,5 @@ body.tabletop.flight #dice.dice-cube{--dice-size:44px;--dice-half:22px;display:b
   .mobile-sheet .dice-policy{font-size:12px}
 }
 @keyframes mobile-sheet-in{from{transform:translateY(35px);opacity:.6}to{transform:translateY(0);opacity:1}}
-@media(prefers-reduced-motion:reduce){.tabletop .mobile-sheet[open]{animation:none}}
+@keyframes mobile-message-in{from{transform:translateY(6px);opacity:0}to{transform:translateY(0);opacity:1}}
+@media(prefers-reduced-motion:reduce){.tabletop .mobile-sheet[open],.mobile-live-message{animation:none}}

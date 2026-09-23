@@ -9,6 +9,30 @@ export function createMobileUI(chat) {
   sheet.id = 'mobile-sheet'; sheet.className = 'mobile-sheet'; sheet.setAttribute('aria-labelledby', 'mobile-sheet-title');
   sheet.innerHTML = '<header class="mobile-sheet-header"><div class="mobile-grip" aria-hidden="true"></div><div><h2 id="mobile-sheet-title">棋室聊天</h2><button type="button" id="mobile-expand" aria-label="展开面板" aria-expanded="false">展开</button><button type="button" id="mobile-close" aria-label="收起面板">收起 ↓</button></div></header><button type="button" id="mobile-turn" hidden>轮到你了 · 返回棋盘 →</button><div class="mobile-sheet-body"><section data-content="chat"></section><section data-content="room" hidden></section><section data-content="more" hidden></section></div>';
   document.body.append(nav, sheet);
+  const liveChat = document.createElement('div');
+  liveChat.id = 'mobile-live-chat'; liveChat.className = 'mobile-live-chat';
+  // The full chat log remains the accessible source; this preview never takes input.
+  liveChat.setAttribute('aria-hidden', 'true'); document.body.append(liveChat);
+  const liveDuration = 16000;
+  let liveMessages = [], liveTimer;
+  function renderLiveChat() {
+    clearTimeout(liveTimer);
+    liveMessages = liveMessages.filter(entry => entry.expires > Date.now());
+    const ids = new Set(liveMessages.map(entry => entry.message.id));
+    for (const row of [...liveChat.children]) if (!ids.has(row.dataset.messageId)) row.remove();
+    for (const entry of liveMessages) {
+      let row = [...liveChat.children].find(row => row.dataset.messageId === entry.message.id);
+      if (!row) {
+        row = document.createElement('div'); row.className = 'mobile-live-message team-' + entry.color;
+        row.dataset.messageId = entry.message.id;
+        const line = document.createElement('div'), name = document.createElement('strong'), text = document.createElement('span');
+        line.className = 'mobile-live-line'; line.append(name, text); row.append(line); liveChat.append(row);
+      }
+      row.querySelector('strong').textContent = entry.message.name + '：';
+      row.querySelector('span').textContent = entry.message.text;
+    }
+    if (liveMessages.length) liveTimer = setTimeout(renderLiveChat, Math.max(0, Math.min(...liveMessages.map(entry => entry.expires)) - Date.now()));
+  }
   const pane = key => sheet.querySelector(`[data-content="${key}"]`);
   const placements = [];
   const remember = (element, destination) => {
@@ -108,15 +132,23 @@ export function createMobileUI(chat) {
   layout();
   function sync(next) {
     state=next;
-    const {mode,room,game,transport,busy}=next;
+    const {mode,room,game,transport,busy,team}=next;
     const scope=mode==='local' ? 'local' : room?.code || 'lobby';
     const messages=mode==='local' ? [] : room?.chat || [];
     const mySeat=room?.yourSeat || room?.yourColor;
     if(scope!==lastScope) {
       if(lastScope!==undefined && sheet.open) close();
       lastScope=scope;seen=new Set(messages.map(message=>message.id));acknowledge();
+      liveMessages=[];renderLiveChat();
     } else {
-      for(const message of messages) if(!seen.has(message.id) && message.seat!==mySeat) unread++;
+      for(const message of messages) if(!seen.has(message.id)) {
+        if(message.seat!==mySeat) unread++;
+        if(narrow.matches && document.visibilityState==='visible') liveMessages.push({message,color:team(message.seat).color,expires:Date.now()+liveDuration});
+      }
+      liveMessages=liveMessages.slice(-3);
+      // Keep renamed players consistent with the full log without replaying the entry.
+      for(const entry of liveMessages) entry.message=messages.find(message=>message.id===entry.message.id)||entry.message;
+      renderLiveChat();
       seen=new Set(messages.map(message=>message.id));
       if(!narrow.matches || (sheet.open && current==='chat' && document.visibilityState==='visible')) acknowledge();
       else updateBadge();
