@@ -69,3 +69,16 @@ body.tabletop.flight #dice.dice-cube{--dice-size:44px;--dice-half:22px;display:b
 .chat-message p,.chat-message.is-mine p{background:var(--team-tint);border-color:var(--team);border-left-width:3px;color:#28332e}
 .chat-message.team-black p{background:#333d37;border-color:#222a25;color:#fffdf5}
 .chat-message.team-white p{background:#fffefa;border-color:#b6b2a7;color:#363d35}
+/* Flight controls occupy their own row above the board, leaving player data clear. */
+.flight .board-dock{display:none}
+.flight-toolbar{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:10px;padding:14px 22px 0;min-width:0}
+.flight-toolbar:not(:has(> :not([hidden]))){display:none}
+.flight-toolbar #game-actions,.flight-toolbar .auto-controls{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:8px;margin:0;width:auto;padding:0}
+.flight-toolbar #game-actions[hidden],.flight-toolbar .auto-controls[hidden]{display:none}
+.flight-toolbar #start-button,.flight-toolbar #rematch-button{width:auto;min-width:0;margin:0;padding:10px 14px;font-size:11px;min-height:40px}
+.flight-toolbar .auto-button{min-height:40px;margin:0}
+.flight-toolbar #leave-button{min-height:40px;padding:8px 10px;font-size:11px;white-space:nowrap}
+.flight .dice-readout .board-reactions{margin:15px 0 0;padding:12px 0 0;border:0;border-top:1px solid #dce0d0;background:none;box-shadow:none;border-radius:0}
+.flight .dice-readout .reaction-buttons{justify-content:flex-start;flex-wrap:wrap;gap:8px}
+.flight .dice-readout .reaction-buttons button{width:36px;min-height:36px;height:36px;flex:0 0 36px}
+@media(max-width:700px){.flight-toolbar{padding:12px 14px 0;gap:7px}.flight-toolbar #start-button,.flight-toolbar #rematch-button{padding:9px 11px}.flight .dice-shelf{align-items:flex-start}.flight .dice-readout .reaction-buttons{display:grid;grid-template-columns:repeat(2,36px);gap:8px}}

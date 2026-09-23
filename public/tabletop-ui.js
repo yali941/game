@@ -100,6 +100,8 @@ export function setupTabletop(kind) {
   } else {
     dock.append($('start-button'), $('flight-controls'), $('rematch-button'), $('game-actions'));
     if (kind === 'flight') {
+      const toolbar = document.createElement('div'); toolbar.id = 'flight-toolbar'; toolbar.className = 'flight-toolbar'; toolbar.setAttribute('role', 'group'); toolbar.setAttribute('aria-label', '棋盘右上方操作区');
+      toolbar.append($('start-button'), $('rematch-button'), $('game-actions')); board.insertBefore(toolbar, status);
       const shelf = document.createElement('div'); shelf.id = 'dice-shelf'; shelf.className = 'dice-shelf';
       const console = document.createElement('section'); console.id = 'board-dice'; console.className = 'board-dice'; console.setAttribute('aria-label', '左下角掷骰区');
       const label = document.createElement('span'); label.className = 'dice-tray-label'; label.textContent = '掷骰区';
@@ -135,6 +137,7 @@ export function setupTabletop(kind) {
   }
   oldPanel.remove();
   const reactions = $('reactions-panel'); reactions.classList.add('board-reactions'); dock.append(reactions);
+  if (kind === 'flight') document.querySelector('.dice-readout').append(reactions);
   for (const dialog of [$('confirm-dialog'), $('share-dialog')]) {
     dialog.classList.add('board-dialog'); board.append(dialog);
   }
