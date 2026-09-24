@@ -11,7 +11,7 @@ import { identifyPlayer, publicPlayer, updateRoomProfile, addChat, setAuto, crea
 
 const publicDir = new URL('./public/', import.meta.url);
 const TYPES = { '/': ['index.html', 'text/html; charset=utf-8'], '/style.css': ['style.css', 'text/css; charset=utf-8'], '/app.js': ['app.js', 'text/javascript; charset=utf-8'], '/game.js': ['game.js', 'text/javascript; charset=utf-8'], '/favicon.svg': ['favicon.svg', 'image/svg+xml'] };
-for (const file of ['hall.html', 'table.html', 'table.css', 'table-app.js', 'table-rules.js', 'flight-path.js', 'profile.js', 'tabletop.css', 'tabletop-ui.js', 'animal-art.js', 'chat-ui.js', 'mobile-ui.js', 'auto-play.js']) TYPES[`/${file}`] = [file, file.endsWith('.js') ? 'text/javascript; charset=utf-8' : file.endsWith('.css') ? 'text/css; charset=utf-8' : 'text/html; charset=utf-8'];
+for (const file of ['hall.html', 'table.html', 'table.css', 'table-app.js', 'table-rules.js', 'flight-path.js', 'profile.js', 'tabletop.css', 'tabletop-ui.js', 'animal-art.js', 'chat-ui.js', 'mobile-ui.js', 'auto-play.js', 'uno.html', 'uno.css', 'uno-app.js', 'uno-rules.js']) TYPES[`/${file}`] = [file, file.endsWith('.js') ? 'text/javascript; charset=utf-8' : file.endsWith('.css') ? 'text/css; charset=utf-8' : 'text/html; charset=utf-8'];
 TYPES['/gomoku'] = TYPES['/']; TYPES['/play'] = TYPES['/table.html'];
 const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const code = () => Array.from(randomBytes(6), b => ALPHABET[b % ALPHABET.length]).join('');
@@ -53,7 +53,7 @@ export function createGameServer(options = {}) {
       if (req.headers.origin && new URL(req.headers.origin).host !== req.headers.host) return json(res, 403, { error: '不允许跨站请求' });
       if (req.method === 'GET' && url.pathname === '/api/rankings') return json(res, 200, records.board(url.searchParams.get('kind'), req));
       if (req.method === 'GET' && TYPES[url.pathname]) {
-        const [file, type] = url.pathname === '/' && !url.searchParams.has('room') ? TYPES['/hall.html'] : TYPES[url.pathname];
+        const [file, type] = url.pathname === '/play' && url.searchParams.get('game')==='uno' ? TYPES['/uno.html'] : url.pathname === '/' && !url.searchParams.has('room') ? TYPES['/hall.html'] : TYPES[url.pathname];
         res.writeHead(200, { 'Content-Type': type, 'Cache-Control': 'no-cache' });
         return res.end(await readFile(new URL(file, publicDir)));
       }

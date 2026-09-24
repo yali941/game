@@ -1,5 +1,6 @@
 import { randomBytes, randomInt } from 'node:crypto';
 import { newTableGame, moveJungle, moveFlight, rollFlight } from './public/table-rules.js';
+import { newUno, unoSnapshot, actUno, tickUno } from './public/uno-rules.js';
 import { identifyPlayer, publicPlayer, updateRoomProfile, addChat, setAuto, createAutoScheduler } from './room-tools.js';
 
 export const UNLUCKY_WEIGHTS = Object.freeze([35, 10, 25, 10, 15, 5]);
@@ -22,8 +23,9 @@ export function createTableService({ roll = () => randomInt(1, 7), records, auto
     if (unlucky) r.game.rollHistory.at(-1).luck = 'unlucky';
   };
   const rooms = new Map();
+  const makeGame=(kind,count,first=1)=>kind==='uno'?newUno(count,randomInt,first):newTableGame(kind,count);
   const connected = p => Boolean(p && !p.gone && p.streams.size);
-  const snapshot = (r, p) => ({ code: r.code, kind: r.kind, count: r.count, yourSeat: p.seat, host: 1, game: r.game, dicePolicy: dicePolicy(r), started: r.started, closed: r.closed, ready: r.ready, round: r.round, version: r.version, seq: r.seq, chat:r.chat||[], players: r.players.map(p => p ? { ...publicPlayer(p), seat: p.seat, connected: connected(p), gone: p.gone } : null) });
+  const snapshot = (r, p) => ({ code: r.code, kind: r.kind, count: r.count, yourSeat: p.seat, host: 1, game: r.kind==='uno'?unoSnapshot(r.game,p.seat):r.game, dicePolicy: dicePolicy(r), started: r.started, closed: r.closed, ready: r.ready, round: r.round, version: r.version, seq: r.seq, chat:r.chat||[], players: r.players.map(p => p ? { ...publicPlayer(p), seat: p.seat, connected: connected(p), gone: p.gone } : null) });
   const availablePlayer=p=>Boolean(p && !p.gone && (connected(p)||p.auto));
   const finishedSeat=(r,p)=>Boolean(p && r.game.finishOrder?.includes(p.seat));
   const readyPlayers=r=>r.players.every(p=>availablePlayer(p) || (r.game.status==='playing' && finishedSeat(r,p)));
@@ -35,11 +37,21 @@ export function createTableService({ roll = () => randomInt(1, 7), records, auto
     auto.sync(r);
   };
   const auto=createAutoScheduler({delay:autoDelay,ready:r=>!r.closed && r.started && r.game.status==='playing' && readyPlayers(r),execute:(r,p,m)=>{
-    if(m.action==='roll') throwDice(r,p);
+    if(r.kind==='uno') actUno(r.game,p.seat,m,randomInt);
+    else if(m.action==='roll') throwDice(r,p);
     else if(r.kind==='flight') moveFlight(r.game,p.seat,m.id);
     else moveJungle(r.game,p.seat,m.id,m.x,m.y);
     r.version++;
   },broadcast});
+  let lastBombTick=Date.now();
+  const bombTimer=setInterval(()=>{
+    const now=Date.now(),elapsed=now-lastBombTick;lastBombTick=now;
+    for(const r of rooms.values()) if(r.kind==='uno' && r.game.status==='playing' && r.game.bombs.length) {
+      if(r.closed || !r.started || !readyPlayers(r)) {for(const bomb of r.game.bombs) bomb.deadline+=elapsed;continue;}
+      if(tickUno(r.game,randomInt,now)) {r.version++;broadcast(r);}
+    }
+  },250);
+  bombTimer.unref?.();
   const send = (res, status, data) => { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(data)); };
   const seat = n => ({ seat: n, token: randomBytes(32).toString('hex'), streams: new Set(), gone: false, nextReactionAt: 0 });
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -57,14 +69,14 @@ export function createTableService({ roll = () => randomInt(1, 7), records, auto
     }
     if (req.method !== 'POST') return send(res, 404, { error: '未知操作' });
     if (action === 'create') {
-      if (!['flight', 'jungle'].includes(data.kind)) throw new Error('请选择飞行棋或斗兽棋');
+      if (!['flight', 'jungle', 'uno'].includes(data.kind)) throw new Error('请选择有效的游戏');
       const diceMode = data.diceMode ?? 'fair';
       if (!['fair', 'unlucky'].includes(diceMode) || (data.kind !== 'flight' && diceMode !== 'fair')) throw new Error('请选择有效的飞行棋模式');
       const count = data.kind === 'jungle' ? 2 : data.count ?? 2;
       if (![2, 3, 4].includes(count)) throw new Error('请选择 2～4 人');
       if (rooms.size >= 500) throw new Error('棋室暂时已满');
       let code; do { code = Array.from(randomBytes(6), b => alphabet[b % alphabet.length]).join(''); } while (rooms.has(code));
-      const p = seat(1), r = { code, kind: data.kind, count, players: [p, ...Array(count - 1).fill(null)], game: newTableGame(data.kind, count), started: false, closed: false, ready: [], round: 1, version: 0, seq: 0, updatedAt: Date.now() };
+      const p = seat(1), r = { code, kind: data.kind, count, players: [p, ...Array(count - 1).fill(null)], game: makeGame(data.kind, count), started: false, closed: false, ready: [], round: 1, version: 0, seq: 0, updatedAt: Date.now() };
       r.diceMode = diceMode;
       identifyPlayer(p,records?.lookup(req));
       rooms.set(code, r); return send(res, 200, { token: p.token, ...snapshot(r, p) });
@@ -73,7 +85,7 @@ export function createTableService({ roll = () => randomInt(1, 7), records, auto
     if (!r) return send(res, 404, { error: '棋室不存在，请检查房间码' });
     if (action === 'join') {
       if (r.closed || r.started) throw new Error('棋室已开始或已关闭');
-      if (data.kind !== r.kind) throw new Error(`这是${r.kind === 'flight' ? '飞行棋' : '斗兽棋'}房间，请从对应玩法加入`);
+      if (data.kind !== r.kind) throw new Error(`这是${{flight:'飞行棋',jungle:'斗兽棋',uno:'UNO'}[r.kind]}房间，请从对应玩法加入`);
       const index = r.players.indexOf(null);
       if (index < 0) throw new Error('棋室已满');
       const p = seat(index + 1); identifyPlayer(p,records?.lookup(req)); r.players[index] = p; broadcast(r);
@@ -104,17 +116,22 @@ export function createTableService({ roll = () => randomInt(1, 7), records, auto
       for (const q of r.players) for (const s of q.streams) s.write(`event: reaction\ndata: ${JSON.stringify(effect)}\n\n`);
       return send(res, 200, { ok: true });
     }
-    if (['roll', 'move'].includes(action) && data.version !== r.version) throw new Error('棋局已更新，请根据当前棋盘操作');
-    if (['roll','move'].includes(action) && p.auto) throw new Error('请先取消托管再手动行棋');
+    if (['roll', 'move', 'uno'].includes(action) && data.version !== r.version) throw new Error('棋局已更新，请根据当前棋盘操作');
+    if (['roll','move','uno'].includes(action) && p.auto) throw new Error('请先取消托管再手动行棋');
     if (action === 'start') {
       if (p.seat !== 1 || r.started) throw new Error('请由房主开始新局');
       r.started = true;
     } else if (!r.started) throw new Error('请等待房主开始游戏');
+    else if (action === 'uno') {
+      if(r.kind!=='uno') throw new Error('不是 UNO 房间');
+      actUno(r.game,p.seat,data.move,randomInt);
+    }
     else if (action === 'roll') {
       if (r.kind !== 'flight') throw new Error('斗兽棋不使用骰子');
       // Clients never supply or influence the online dice result.
       throwDice(r, p);
     } else if (action === 'move') {
+      if(r.kind==='uno') throw new Error('请使用 UNO 出牌操作');
       if (r.kind === 'flight') moveFlight(r.game, p.seat, data.id);
       else moveJungle(r.game, p.seat, data.id, data.x, data.y);
     } else if (action === 'resign') {
@@ -123,11 +140,11 @@ export function createTableService({ roll = () => randomInt(1, 7), records, auto
     } else if (action === 'rematch') {
       if (r.game.status !== 'finished') throw new Error('本局尚未结束');
       if (!r.ready.includes(p.seat)) r.ready.push(p.seat);
-      if (r.ready.length === r.count) { r.players.forEach(p=>p.auto=false);r.game = newTableGame(r.kind, r.count); r.round++; r.ready = []; r.game.turn = (r.round - 1) % r.count + 1; }
+      if (r.ready.length === r.count) { r.players.forEach(p=>p.auto=false);r.round++;r.game = makeGame(r.kind, r.count, (r.round-1)%r.count+1); r.ready = []; if(r.kind!=='uno') r.game.turn = (r.round - 1) % r.count + 1; }
     } else return send(res, 404, { error: '未知操作' });
     r.version++; broadcast(r); return send(res, 200, snapshot(r, p));
   }
   const cleanup = () => { for (const [code, r] of rooms) if (!r.players.some(connected) && Date.now() - r.updatedAt > 86400000) rooms.delete(code); };
   const updateProfile=profile=>{for(const r of rooms.values()) if(updateRoomProfile(r,profile)) broadcast(r);};
-  return { handle, cleanup, rooms, updateProfile, close:auto.close };
+  return { handle, cleanup, rooms, updateProfile, close:()=>{auto.close();clearInterval(bombTimer);} };
 }
