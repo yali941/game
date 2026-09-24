@@ -8,7 +8,7 @@ export function createRoomUI({kind,send,refresh,playLocal}) {
   const ranking=document.querySelector('.ranking-panel'),roomPanel=document.getElementById('room-panel');
   roomPanel.before(panel);ranking.before(roomPanel);
   const controls=document.createElement('div');controls.className='auto-controls';controls.id='auto-controls';controls.setAttribute('aria-label','托管控制');
-  if(kind==='flight') document.getElementById('game-actions').before(controls);
+  if(kind==='flight'||kind==='uno') document.getElementById('game-actions').before(controls);
   else document.querySelector('.board-dock').append(controls);
   const el=id=>panel.querySelector('#'+id);
   const mobileUI=createMobileUI(panel);

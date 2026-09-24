@@ -1,9 +1,11 @@
 import { SIZE, winningLine } from './game.js';
 import { jungleTargets, denOwner, flightOptions } from './table-rules.js';
+import { chooseUnoMove } from './uno-rules.js';
 
 // Deterministic, legal moves for optional assistance. Rules still validate every move.
 export function chooseAutoMove(game) {
   if (game.status !== 'playing') return null;
+  if (game.kind === 'uno') return chooseUnoMove(game);
   if (game.kind === 'flight') {
     if (game.phase === 'roll') return { action:'roll' };
     const options = flightOptions(game);
