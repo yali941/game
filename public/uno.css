@@ -14,3 +14,29 @@ body.uno{background:radial-gradient(ellipse at 14% 0,#dce8df,transparent 60%),#e
 .uno .pile-row{position:relative;z-index:2}
 .uno .direction-flip{animation:direction-flip .55s ease-out}
 @media(max-width:700px){.uno .uno-direction{top:calc(50% - 82px);width:36px;height:36px}.uno .uno-direction b{font-size:27px}}
+
+/* Keep the piles centered inside the tabletop and use a round felt table. */
+.uno #board-wrap{
+  width:min(100%,390px);
+  height:auto;
+  min-height:0;
+  aspect-ratio:1;
+  margin:0 auto;
+  border-radius:50%;
+}
+.uno .uno-center{
+  position:absolute;
+  inset:0;
+}
+.uno .pile-row{transform:translateY(28px)}
+.uno .felt-line,
+.uno-table:before,
+.uno #table-empty,
+.uno #table-effects{border-radius:50%}
+@media(max-width:700px){
+  .uno #board-wrap{width:100%;height:auto;min-height:0;aspect-ratio:1;margin:0 auto;border-radius:50%}
+  .uno .pile-row{transform:translateY(22px)}
+}
+@media(max-width:360px){
+  .uno .pile-row{transform:translateY(18px)}
+}
