@@ -40,3 +40,29 @@ body.uno{background:radial-gradient(ellipse at 14% 0,#dce8df,transparent 60%),#e
 @media(max-width:360px){
   .uno .pile-row{transform:translateY(18px)}
 }
+
+/* Keep the card piles locked to the exact center, regardless of status text. */
+.uno .uno-center{display:block}
+.uno .pile-row{
+  position:absolute;
+  left:50%;
+  top:50%;
+  transform:translate(-50%,-50%);
+}
+.uno .table-condition{
+  position:absolute;
+  left:50%;
+  top:calc(50% + 58px);
+  transform:translateX(-50%);
+  white-space:nowrap;
+}
+.uno #penalty-note{
+  position:absolute;
+  left:50%;
+  top:calc(50% + 84px);
+  transform:translateX(-50%);
+}
+@media(max-width:700px){
+  .uno .table-condition{top:calc(50% + 48px)}
+  .uno #penalty-note{top:calc(50% + 70px)}
+}
