@@ -55,8 +55,9 @@ function render() {
   document.querySelectorAll('[data-reaction]').forEach(b=>b.disabled=!transport||busy||!room?.players.every(p=>p&&(p.connected||p.auto)));
   $('status-title').textContent=!room?'牌桌已备好':room.closed?'房间已关闭':!room.started?`等朋友入座 · ${present}/${room.count}`:g.status==='finished'?(g.winner?`${name(g.winner)} 获胜`:'本局结束'):!room.players.every(p=>p&&(p.connected||p.auto))?'等待断线玩家重连':isTurn?'轮到你出牌':`${name(g.turn)} 的回合`;
   $('status-detail').textContent=(g.message||'').replace(/(\d) 号位/g,(_,n)=>name(Number(n)));
-  $('table-empty').hidden=Boolean(room);$('direction').querySelector('span').textContent=g.direction===1?'顺时针出牌':'逆时针出牌';
-  const arrow=$('direction').querySelector('b');arrow.textContent=g.direction===1?'↻':'↺';
+  $('table-empty').hidden=Boolean(room);
+  const direction=$('direction');direction.setAttribute('aria-label',g.direction===1?'出牌顺时针':'出牌逆时针');
+  const arrow=direction.querySelector('b');arrow.textContent=g.direction===1?'↻':'↺';
   if(lastDirection!==g.direction) {arrow.classList.remove('direction-flip');void arrow.offsetWidth;arrow.classList.add('direction-flip');lastDirection=g.direction;}
   $('active-color').textContent=g.color?`当前 · ${UNO_COLOR_NAMES[g.color]}色`:'等待开局';$('active-color').style.setProperty('--chip',colors[g.color]||'#c7c9a4');
   $('bomb-status').hidden=!g.bombs.length;$('bomb-status').textContent=`💣 ${g.bombs.length>1?g.bombs.length+' 枚 · ':''}引信燃烧中`;

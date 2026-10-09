@@ -5,3 +5,12 @@ body.uno{background:radial-gradient(ellipse at 14% 0,#dce8df,transparent 60%),#e
 @media(max-width:360px){.uno #board-wrap{min-height:320px}.uno-seat{width:62px}.uno-seat strong{max-width:61px}.pile-row{gap:12px}.uno .pile-row .uno-card{width:52px;height:78px}.table-condition{flex-direction:column;gap:3px}.uno-center{gap:5px}.uno-hand .uno-card+.uno-card{margin-left:-22px}}
 @media(prefers-reduced-motion:reduce){.uno *, .uno *:before{animation:none!important;transition:none!important}}
 .uno .uno-toolbar .auto-controls{width:auto;flex:0 0 auto;margin:0}.uno #board-wrap{height:clamp(350px,34vw,440px);aspect-ratio:auto}@media(max-width:700px){.uno #board-wrap{height:335px;min-height:335px}}@media(max-width:360px){.uno #board-wrap{height:320px;min-height:320px}}
+/* The direction marker lives with the center piles, like a tabletop turn arrow. */
+.uno .uno-center{position:relative}
+.uno .uno-direction{position:absolute;z-index:4;left:50%;top:calc(50% - 102px);width:42px;height:42px;display:grid;place-items:center;transform:translateX(-50%);color:#d2ddaf;font-size:0;letter-spacing:0;pointer-events:none}
+.uno .uno-direction:before{content:'';position:absolute;inset:1px;border:1px solid #d2ddaf5c;border-radius:50%;box-shadow:0 0 0 4px #123f3b40,0 2px 5px #061f1c55}
+.uno .uno-direction b{position:relative;font:32px/1 Georgia,'Times New Roman',serif;color:#e0dfaf;text-shadow:0 1px 0 #284b3c,0 2px 4px #061f1c80}
+.uno .uno-direction span{display:none}
+.uno .pile-row{position:relative;z-index:2}
+.uno .direction-flip{animation:direction-flip .55s ease-out}
+@media(max-width:700px){.uno .uno-direction{top:calc(50% - 82px);width:36px;height:36px}.uno .uno-direction b{font-size:27px}}
