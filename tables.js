@@ -23,6 +23,7 @@ export function createTableService({ roll = () => randomInt(1, 7), records, auto
     if (unlucky) r.game.rollHistory.at(-1).luck = 'unlucky';
   };
   const rooms = new Map();
+  const waitingUno=count=>({kind:'uno',count,hands:Array.from({length:count},()=>[]),deck:[],top:null,turn:0,direction:1,color:'',phase:'waiting',pending:null,bombs:[],status:'waiting',winner:0,moves:[],last:null,message:'至少两人入座即可开始，最多 8 人，开局前可继续邀请朋友。'});
   const makeGame=(kind,count,first=1)=>kind==='uno'?newUno(count,randomInt,first):newTableGame(kind,count);
   const connected = p => Boolean(p && !p.gone && p.streams.size);
   const snapshot = (r, p) => ({ code: r.code, kind: r.kind, count: r.count, yourSeat: p.seat, host: 1, game: r.kind==='uno'?unoSnapshot(r.game,p.seat):r.game, dicePolicy: dicePolicy(r), started: r.started, closed: r.closed, ready: r.ready, round: r.round, version: r.version, seq: r.seq, chat:r.chat||[], players: r.players.map(p => p ? { ...publicPlayer(p), seat: p.seat, connected: connected(p), gone: p.gone } : null) });
@@ -72,11 +73,11 @@ export function createTableService({ roll = () => randomInt(1, 7), records, auto
       if (!['flight', 'jungle', 'uno'].includes(data.kind)) throw new Error('请选择有效的游戏');
       const diceMode = data.diceMode ?? 'fair';
       if (!['fair', 'unlucky'].includes(diceMode) || (data.kind !== 'flight' && diceMode !== 'fair')) throw new Error('请选择有效的飞行棋模式');
-      const count = data.kind === 'jungle' ? 2 : data.count ?? 2;
-      if (![2, 3, 4].includes(count)) throw new Error('请选择 2～4 人');
+      const count = data.kind === 'uno' ? 1 : data.kind === 'jungle' ? 2 : data.count ?? 2;
+      if (data.kind!=='uno' && ![2, 3, 4].includes(count)) throw new Error('请选择 2～4 人');
       if (rooms.size >= 500) throw new Error('棋室暂时已满');
       let code; do { code = Array.from(randomBytes(6), b => alphabet[b % alphabet.length]).join(''); } while (rooms.has(code));
-      const p = seat(1), r = { code, kind: data.kind, count, players: [p, ...Array(count - 1).fill(null)], game: makeGame(data.kind, count), started: false, closed: false, ready: [], round: 1, version: 0, seq: 0, updatedAt: Date.now() };
+      const p = seat(1), r = { code, kind: data.kind, count, players: [p, ...Array(count - 1).fill(null)], game: data.kind==='uno'?waitingUno(count):makeGame(data.kind, count), started: false, closed: false, ready: [], round: 1, version: 0, seq: 0, updatedAt: Date.now() };
       r.diceMode = diceMode;
       identifyPlayer(p,records?.lookup(req));
       rooms.set(code, r); return send(res, 200, { token: p.token, ...snapshot(r, p) });
@@ -86,9 +87,12 @@ export function createTableService({ roll = () => randomInt(1, 7), records, auto
     if (action === 'join') {
       if (r.closed || r.started) throw new Error('棋室已开始或已关闭');
       if (data.kind !== r.kind) throw new Error(`这是${{flight:'飞行棋',jungle:'斗兽棋',uno:'UNO'}[r.kind]}房间，请从对应玩法加入`);
-      const index = r.players.indexOf(null);
+      let index = r.players.indexOf(null);
+      if(r.kind==='uno' && index<0 && r.players.length<8) index=r.players.length;
       if (index < 0) throw new Error('棋室已满');
-      const p = seat(index + 1); identifyPlayer(p,records?.lookup(req)); r.players[index] = p; broadcast(r);
+      const p = seat(index + 1); identifyPlayer(p,records?.lookup(req)); r.players[index] = p;
+      if(r.kind==='uno') {r.count=r.players.length;r.game=waitingUno(r.count);}
+      broadcast(r);
       return send(res, 200, { token: p.token, ...snapshot(r, p) });
     }
     const p = r.players.find(p => p && !p.gone && req.headers.authorization === `Bearer ${p.token}`);
@@ -120,6 +124,10 @@ export function createTableService({ roll = () => randomInt(1, 7), records, auto
     if (['roll','move','uno'].includes(action) && p.auto) throw new Error('请先取消托管再手动行棋');
     if (action === 'start') {
       if (p.seat !== 1 || r.started) throw new Error('请由房主开始新局');
+      if(r.kind==='uno') {
+        if(r.count<2) throw new Error('至少两人入座后才能开始');
+        r.game=makeGame('uno',r.count);
+      }
       r.started = true;
     } else if (!r.started) throw new Error('请等待房主开始游戏');
     else if (action === 'uno') {

@@ -1,10 +1,12 @@
 import { UNO_COLORS, UNO_COLOR_NAMES, UNO_LABELS, UNO_ICONS, unoCardLabel, unoSeatPositions } from './uno-rules.js';
 import { createRoomUI } from './chat-ui.js';
+import { createUnoMotion } from './uno-motion.js';
 import { profileReady, profileHeaders, refreshRankings } from './profile.js';
 const $=id=>document.getElementById(id), colors={red:'#c2463e',yellow:'#dea62b',green:'#398762',blue:'#4085b3'},faces=['🐻','🐱','🐶','🐰'];
 const empty={kind:'uno',count:4,turn:0,direction:1,color:'',hand:[],handCounts:[0,0,0,0],legalIds:[],bombs:[],moves:[],status:'waiting',message:'邀请朋友，开始这一局。'};
 let room=null,token='',stream=null,transport=false,busy=false,selected=null,toastTimer,handKey='',seatKey='',lastTop='',lastDirection=1,lastRound='',refreshing=false;
-const team=seat=>({name:['红方','黄方','绿方','蓝方'][seat-1]||'牌友',color:UNO_COLORS[seat-1]||'green'});
+const team=seat=>({name:`${seat} 号位`,color:UNO_COLORS[(seat-1)%4]});
+const motion=createUnoMotion({board:$('board-wrap'),cardNode});
 const name=seat=>room?.players[seat-1]?.name||`${seat} 号位`;
 function say(message) {$('toast').textContent=message;$('toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').hidden=true,4000);}
 function cache() {try {if(room) sessionStorage.setItem('yiju-uno-room',JSON.stringify({room:room.code,token}));else sessionStorage.removeItem('yiju-uno-room');}catch {}}
@@ -15,7 +17,8 @@ async function api(action,data={}) {
 function apply(value) {
   if(!value?.game||value.kind!=='uno'||(room?.code===value.code&&value.seq<room.seq)) return;
   if(value.token) token=value.token;
-  room=value;cache();render();
+  const previous=room;
+  room=value;cache();render();motion.update(previous,value);
 }
 async function send(action,data={}) {const value=await api(action,data);apply(value);return value;}
 function connect() {
@@ -45,16 +48,16 @@ function render() {
   $('room-code').textContent=room?.code||'';
   $('connection').textContent=room?(transport?'● 已连接':'○ 正在重连…'):'等待入座';
   const present=room?.players.filter(p=>p&&!p.gone).length||0;
-  $('room-note').textContent=room?`${present} / ${room.count} 人入座 · 第 ${room.round} 局${room.closed?' · 房间已关闭':''}`:'';
+  $('room-note').textContent=room?`${present} 人入座 · ${room.started?'第 '+room.round+' 局':'最多 8 人，开局前可继续加入'}${room.closed?' · 房间已关闭':''}`:'';
   $('start-button').hidden=!room||room.started||room.closed||mine!==1;
-  $('start-button').disabled=!transport||busy||!room?.players.every(p=>p&&(p.connected||p.auto));
+  $('start-button').disabled=!transport||busy||present<2||!room?.players.every(p=>p&&(p.connected||p.auto));
   $('rematch-button').hidden=!room||room.closed||g.status!=='finished';
   $('rematch-button').disabled=busy||!transport||Boolean(room?.ready.includes(mine));
   $('rematch-button').textContent=room?.ready.includes(mine)?`等待再来一局 (${room.ready.length}/${room.count})`:'再来一局 ↻';
   $('reactions-panel').hidden=!room||room.closed;
   document.querySelectorAll('[data-reaction]').forEach(b=>b.disabled=!transport||busy||!room?.players.every(p=>p&&(p.connected||p.auto)));
-  $('status-title').textContent=!room?'牌桌已备好':room.closed?'房间已关闭':!room.started?`等朋友入座 · ${present}/${room.count}`:g.status==='finished'?(g.winner?`${name(g.winner)} 获胜`:'本局结束'):!room.players.every(p=>p&&(p.connected||p.auto))?'等待断线玩家重连':isTurn?'轮到你出牌':`${name(g.turn)} 的回合`;
-  $('status-detail').textContent=(g.message||'').replace(/(\d) 号位/g,(_,n)=>name(Number(n)));
+  $('status-title').textContent=!room?'牌桌已备好':room.closed?'房间已关闭':!room.started?`等朋友入座 · 已有 ${present} 人`:g.status==='finished'?(g.winner?`${name(g.winner)} 获胜`:'本局结束'):!room.players.every(p=>p&&(p.connected||p.auto))?'等待断线玩家重连':isTurn?'轮到你出牌':`${name(g.turn)} 的回合`;
+  $('status-detail').textContent=(g.message||'').replace(/(\d+) 号位/g,(_,n)=>name(Number(n)));
   $('table-empty').hidden=Boolean(room);
   const direction=$('direction');direction.setAttribute('aria-label',g.direction===1?'出牌顺时针':'出牌逆时针');
   const arrow=direction.querySelector('b');arrow.textContent=g.direction===1?'↻':'↺';
@@ -62,6 +65,8 @@ function render() {
   $('active-color').textContent=g.color?`当前 · ${UNO_COLOR_NAMES[g.color]}色`:'等待开局';$('active-color').style.setProperty('--chip',colors[g.color]||'#c7c9a4');
   $('bomb-status').hidden=!g.bombs.length;$('bomb-status').textContent=`💣 ${g.bombs.length>1?g.bombs.length+' 枚 · ':''}引信燃烧中`;
   const p=g.pending;
+  $('draw-penalty').hidden=p?.type!=='draw2';$('draw-penalty').textContent=p?.type==='draw2'?`+${p.amount}`:'';
+  $('draw-penalty').setAttribute('aria-label',`累计罚摸 ${p?.amount||0} 张`);
   $('penalty-note').textContent=!p?'':p.type==='draw2'?`累计 +${p.amount} · 接铲子 / 隐身可传递`:p.type==='taser'?`电击 · 摸到${UNO_COLOR_NAMES[p.color]}色或万能牌`:p.type==='bomb'?'炸弹爆炸 · +4 / 隐身传递':'冰冻 · 跳过 / 隐身传递';
   $('take-button').hidden=!(room?.started&&p&&isTurn&&g.status==='playing');$('take-button').disabled=!can;
   $('take-button').textContent=p?.type==='skip'?'接受冰冻 · 跳过':p?.type==='taser'?'接受电击 · 摸牌':`摸 ${p?.amount||0} 张罚牌`;
@@ -70,14 +75,25 @@ function render() {
   $('draw-button').querySelector('small').textContent=room?`摸牌 · ${g.deckCount}`:'摸牌堆';
   $('hand-label').textContent=room?`我的手牌 · ${room.started?g.hand.length:'待开局'}${room.players[mine-1]?.auto?' · 托管中':''}`:'你的手牌';
   $('hand-hint').textContent=!room?'可出的牌会微微上挑':!room.started?'等待房主开始':g.status==='finished'?'本局结束':room.players[mine-1]?.auto?'取消托管后可手动出牌':isTurn?(p?'处理当前效果后继续':'点上挑的牌出牌 · 万能牌先选色'):'等待对手 · 出牌不限时';
-  const positions=unoSeatPositions(g.count,mine),nextSeatKey=JSON.stringify([positions,room?.players,g.handCounts,g.turn,room?.started,g.status]);
-  if(seatKey!==nextSeatKey) {seatKey=nextSeatKey;$('uno-seats').replaceChildren();for(const {seat,position} of positions) {
+  const positions=unoSeatPositions(g.count,mine);
+  const angles={bottom:0,left:90,top:180,right:270};
+  const nextSeatKey=JSON.stringify([positions,room?.players,g.handCounts,g.frozenSeats,g.turn,room?.started,g.status]);
+  if(seatKey!==nextSeatKey) {seatKey=nextSeatKey;$('uno-seats').replaceChildren();for(const {seat,position,angle:seatAngle} of positions) {
     const player=room?.players[seat-1],node=document.createElement('div');node.className=`uno-seat ${position}${room?.started&&g.status==='playing'&&g.turn===seat?' active':''}${player&&!player.connected&&!player.auto?' offline':''}`;node.dataset.seat=seat;
-    const avatar=document.createElement('div'),label=document.createElement('strong'),note=document.createElement('small'),count=document.createElement('b');avatar.className='seat-avatar';avatar.textContent=faces[seat-1];avatar.style.borderColor=colors[team(seat).color];
+    const frozen=g.status==='playing'&&g.frozenSeats?.includes(seat);node.classList.toggle('is-frozen',Boolean(frozen));
+    const angle=(seatAngle??angles[position])*Math.PI/180;
+    node.style.left=`${50-38*Math.sin(angle)}%`;node.style.top=`${50+38*Math.cos(angle)}%`;
+    const avatar=document.createElement('div'),label=document.createElement('strong'),note=document.createElement('small'),count=document.createElement('b'),rack=document.createElement('div');avatar.className='seat-avatar';avatar.textContent=faces[(seat-1)%faces.length];avatar.style.borderColor=colors[team(seat).color];
+    const total=room?.started?g.handCounts[seat-1]:0,shown=Math.min(total,12);rack.className='seat-hand';rack.setAttribute('aria-label',`${name(seat)} 的手牌：${total} 张`);
+    for(let i=0;i<shown;i++){const back=document.createElement('i');back.className='mini-back';back.setAttribute('aria-hidden','true');back.style.setProperty('--fan-x',`${(i-(shown-1)/2)*Math.min(5,34/Math.max(1,shown-1))}px`);back.style.setProperty('--fan-r',`${(i-(shown-1)/2)*3}deg`);rack.append(back);}
     label.textContent=player?`${player.name}${seat===mine?' · 你':''}`:'等待入座';label.title=player?.name||'空座位';
-    note.textContent=!player?`${seat} 号位`:player.gone?'已离开':player.auto?'托管中':!player.connected?'重连中':!room.started?'已就座':g.status==='finished'?(g.winner===seat?'本局获胜':'本局结束'):g.turn===seat?'正在行动':g.handCounts[seat-1]===1?'最后一张！':'等待出牌';
-    count.className='seat-count';count.textContent=room?.started?g.handCounts[seat-1]:'—';count.setAttribute('aria-label',`剩余 ${count.textContent} 张牌`);node.append(avatar,label,note,count);$('uno-seats').append(node);
+    note.textContent=!player?`${seat} 号位`:player.gone?'已离开':player.auto?'托管中':!player.connected?'重连中':!room.started?'已就座':g.status==='finished'?(g.winner===seat?'本局获胜':'本局结束'):g.turn===seat?'正在行动':g.handCounts[seat-1]===1?'最后一张！':'';
+    if(frozen){note.textContent='冻结中';avatar.setAttribute('aria-label',`${name(seat)} 已冻结，等待下次行动`);}
+    count.className='seat-count';count.textContent=room?.started?`${total} 张`:'待开局';rack.append(count);node.append(rack,avatar,label,note);$('uno-seats').append(node);
   }}
+  const actor=positions.find(p=>p.seat===g.turn),pointer=$('turn-pointer');
+  pointer.hidden=!room?.started||g.status!=='playing'||!actor;
+  if(actor){const angle=actor.angle??angles[actor.position],radians=angle*Math.PI/180;pointer.style.left=`${50-23*Math.sin(radians)}%`;pointer.style.top=`${50+23*Math.cos(radians)}%`;pointer.style.setProperty('--point-angle',`${angle+90}deg`);pointer.setAttribute('aria-label',`当前出牌：${name(g.turn)}`);}
   const currentTop=JSON.stringify([room?.code,room?.round,g.top,g.last?.number]);
   if(currentTop!==lastTop) {const animate=lastTop&&lastRound===`${room?.code}:${room?.round}`&&g.last?.action==='play';lastTop=currentTop;lastRound=`${room?.code}:${room?.round}`;$('discard').replaceChildren();if(g.top) {const card=cardNode(g.top);if(animate)card.classList.add('card-arrive');$('discard').append(card);}if(g.last?.action==='explosion')animateEffect('💥');}
   const visibleHand=room?.started?g.hand:[],nextHandKey=JSON.stringify([visibleHand,g.legalIds,can,room?.started]);
@@ -95,7 +111,7 @@ $('color-dialog').querySelectorAll('[data-color]').forEach(button=>button.onclic
 $('draw-button').onclick=()=>operate('uno',{move:{action:'draw'}});$('take-button').onclick=()=>operate('uno',{move:{action:'take-penalty'}});$('pass-button').onclick=()=>operate('uno',{move:{action:'pass'}});
 $('start-button').onclick=()=>operate('start');$('rematch-button').onclick=()=>operate('rematch');
 async function enter(action,data) {if(busy||room)return;busy=true;render();try {await profileReady;apply(await api(action,data));history.replaceState(null,'',`/play?game=uno&room=${room.code}`);connect();}catch(error){say(error.message);}finally{busy=false;render();}}
-$('create-button').onclick=()=>enter('create',{count:Number($('player-count').value)});
+$('create-button').onclick=()=>enter('create',{});
 $('join-form').onsubmit=event=>{event.preventDefault();enter('join',{room:$('room-input').value.trim().toUpperCase()});};
 $('invite-entry').onclick=()=>{if(matchMedia('(max-width:700px)').matches)document.querySelector('.mobile-nav [data-pane="room"]').click();else {$('lobby').scrollIntoView({behavior:'smooth',block:'center'});$('create-button').focus();}};
 $('copy-button').onclick=async()=>{const url=`${location.origin}/play?game=uno&room=${room.code}`;try{await navigator.clipboard.writeText(url);say('邀请链接已复制');}catch{$('share-url').value=url;$('share-dialog').showModal();$('share-url').select();}};
