@@ -66,3 +66,79 @@ body.uno{background:radial-gradient(ellipse at 14% 0,#dce8df,transparent 60%),#e
   .uno .table-condition{top:calc(50% + 48px)}
   .uno #penalty-note{top:calc(50% + 70px)}
 }
+
+/* Compact cards leave the round felt clear for players and targeted effects. */
+.uno #board-wrap{width:min(100%,480px)}
+.uno .pile-row{gap:20px}
+.uno .pile-row .uno-card{width:52px;height:76px;min-height:0;border-width:3px;padding:4px}
+.uno .pile-row .card-symbol{font-size:26px}
+.uno .pile-row .card-caption{font-size:6px;letter-spacing:0}
+.uno .pile-row .card-corner{font-size:10px}
+.uno .card-back>span{font-size:17px;letter-spacing:1px}
+.uno .card-back>small{font-size:8px;white-space:nowrap}
+.uno .uno-direction{top:calc(50% - 82px);width:32px;height:32px}
+.uno .uno-direction b{font-size:28px}
+.uno .table-condition{top:calc(50% + 44px);gap:4px;flex-direction:column;font-size:8px}
+.uno #penalty-note{top:calc(50% + 78px);font-size:9px;width:144px;line-height:1.3}
+.uno .uno-seat{width:76px;gap:2px;bottom:auto;right:auto;transform:translate(-50%,-50%)}
+.uno .seat-avatar{width:30px;height:30px;font-size:22px;flex-shrink:0}
+.uno .uno-seat strong{font-size:10px;padding:1px 4px;max-width:76px}
+.uno .uno-seat small{font-size:8px;line-height:1.2}
+.seat-hand{position:relative;height:30px;width:72px;flex-shrink:0}
+.mini-back{display:block;width:20px;height:28px;border:1.5px solid #f5ecd4;border-radius:3px;background:repeating-linear-gradient(45deg,#214e49 0 3px,#38625b 3px 5px);box-shadow:0 2px 2px #001e2380}
+.seat-hand .mini-back{position:absolute;left:calc(50% - 10px);top:0;transform:translateX(var(--fan-x)) rotate(var(--fan-r));transform-origin:50% 110%}
+.uno .seat-hand .seat-count{position:absolute;left:50%;top:auto;bottom:-1px;transform:translateX(-50%);font-size:8px;line-height:12px;padding:0 4px;min-width:25px;white-space:nowrap;border-color:#c9d5b778;background:#123b35ed}
+.uno-seat.active .seat-hand .seat-count{background:#e1d79d;color:#173d33}
+.uno .uno-flying-card{position:absolute;left:0;top:0;pointer-events:none;z-index:12;width:32px;height:46px;min-height:0;border-width:2px;padding:2px;font-size:8px;display:grid;place-items:center;color:#eee9c9;will-change:transform,opacity}
+.uno-flying-card .card-symbol{font-size:20px}.uno-flying-card .card-caption,.uno-flying-card .card-corner{display:none}
+.uno-hit{position:absolute;inset:17px 3px 8px;z-index:6;display:grid;place-items:center;pointer-events:none;border-radius:16px;font-size:56px;font-family:Arial,sans-serif}
+.hit-taser{color:#fff5aa;background:#d4f39e33;box-shadow:0 0 16px #e7fa98,inset 0 0 16px #deff9e;text-shadow:-10px -8px #b6f6fb,12px 9px #eafb75}
+.hit-skip{color:#f4feff;background:linear-gradient(140deg,#b8faffc9,#6dbde88c 45%,#e2ffffbf);border:2px solid #ddffff;box-shadow:0 0 13px #93ddf7,inset 0 0 15px #e2ffff}
+.uno .uno-hand .uno-card{width:64px;height:92px;min-height:0;border-width:3px}
+.uno .uno-hand .card-symbol{font-size:28px}
+.uno .uno-hand .card-caption{font-size:7px}
+.uno .uno-hand{min-height:128px;padding-top:23px}
+@media(max-width:700px){
+  .uno .pile-row{gap:16px}
+  .uno .pile-row .uno-card{width:44px;height:64px;padding:3px}
+  .uno .pile-row .card-symbol{font-size:23px}
+  .uno .pile-row .card-caption{font-size:5px}
+  .uno .pile-row .card-corner{font-size:8px}
+  .uno .card-back>span{font-size:14px}.uno .card-back>small{font-size:6px}
+  .uno .uno-direction{top:calc(50% - 64px);width:26px;height:26px}.uno .uno-direction b{font-size:24px}
+  .uno .table-condition{top:calc(50% + 36px);font-size:7px;min-height:0;gap:2px}.uno .color-chip{padding:2px 5px}
+  .uno #penalty-note{top:calc(50% + 63px);font-size:8px;width:118px}
+  .uno .uno-seat{width:60px;gap:1px}.uno .uno-seat strong{font-size:9px;max-width:60px}.uno .uno-seat small{font-size:7px}
+  .uno .seat-avatar{width:26px;height:26px;font-size:19px}.seat-hand{height:25px;width:60px}.seat-hand .mini-back{width:17px;height:23px;left:calc(50% - 8.5px)}
+  .uno .seat-hand .seat-count{font-size:7px;line-height:10px}
+  .uno .uno-hand .uno-card{width:56px;height:82px;padding:4px}.uno .uno-hand .card-symbol{font-size:25px}.uno .uno-hand .uno-card+.uno-card{margin-left:-17px}
+  .uno .uno-hand{min-height:119px}.uno .hand-heading{align-items:flex-start}.uno #hand-hint{max-width:58%;text-align:right}
+}
+.uno .hand-zone #penalty-note{position:static;transform:none;width:auto;max-width:none;margin:0 0 9px;padding:7px 10px;border-radius:7px;background:#e9ead9;color:#59654b;font-size:11px;line-height:1.5;text-align:left}
+.uno #penalty-note:empty{display:none}
+.uno .pile-row{gap:16px}
+.uno .pile-row .uno-card{width:44px;height:64px}
+.uno .pile-row .card-symbol{font-size:22px}
+.uno .pile-row .card-caption{font-size:5px}
+.uno .pile-row .card-corner{font-size:8px}
+.uno .card-back>span{font-size:14px}.uno .card-back>small{font-size:6px}
+.uno .table-condition{top:calc(50% + 39px)}
+.uno .uno-direction{top:calc(50% - 65px);width:26px;height:26px}
+.uno .uno-direction b{font-size:24px}
+.uno .seat-hand{height:26px;width:60px}.uno .seat-hand .mini-back{width:17px;height:24px;left:calc(50% - 8.5px)}
+.uno .uno-seat small:empty{display:none}
+.turn-pointer{position:absolute;width:26px;height:20px;transform:translate(-50%,-50%) rotate(var(--point-angle));z-index:4;pointer-events:none;filter:drop-shadow(0 2px 3px #001f28a0)}
+.turn-pointer svg{display:block;width:100%;height:100%;fill:#f3de8c;stroke:#fff0b0;stroke-width:.7}
+.uno .draw-penalty{position:absolute;top:-9px;right:-12px;min-width:26px;padding:3px 5px;border:1px solid #ffe9ac;border-radius:7px;background:#a34836;color:#fff2c6;font:bold 12px/1.1 Arial,sans-serif;z-index:3;box-shadow:0 2px 5px #092a2a90}
+.uno .is-frozen .seat-avatar{position:relative;border-color:#d6fcff!important;border-radius:8px;background:linear-gradient(140deg,#c0f8ff,#7ec4e4);box-shadow:0 0 0 2px #a8e7ef99,0 0 12px #8edef480}
+.uno .is-frozen .seat-avatar:after{content:'❄';position:absolute;inset:-3px;display:grid;place-items:center;border-radius:8px;background:linear-gradient(120deg,#d4ffff99,#83cce84d,#e0ffff77);color:#f2ffff;font-size:30px;text-shadow:0 1px 3px #3492be;pointer-events:none}
+.uno .is-frozen small{color:#baf1ff}
+.uno #draw-button{overflow:visible}.uno #draw-button:after{content:'';position:absolute;inset:-5px}
+@media(max-width:700px){
+  .uno .pile-row{gap:14px}.uno .pile-row .uno-card{width:38px;height:54px;border-width:2px;padding:3px}
+  .uno .pile-row .card-symbol{font-size:20px}.uno .pile-row .card-caption{font-size:5px}.uno .card-back>span{font-size:12px}
+  .uno .uno-direction{top:calc(50% - 53px);width:22px;height:22px}.uno .uno-direction b{font-size:20px}
+  .uno .table-condition{top:calc(50% + 31px)}
+  .uno .seat-hand{height:23px}.uno .seat-hand .mini-back{width:15px;height:21px;left:calc(50% - 7.5px)}
+  .uno .uno-seat strong{font-size:10px}.turn-pointer{width:19px;height:15px}
+}

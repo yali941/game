@@ -15,6 +15,8 @@ export function unoDeck() {
 function shuffle(cards,rng) {for(let i=cards.length-1;i>0;i--) {const j=rng(i+1);[cards[i],cards[j]]=[cards[j],cards[i]];}return cards;}
 export const unoNext = (g,seat,steps=1)=>((seat-1+g.direction*steps)%g.count+g.count)%g.count+1;
 export function unoSeatPositions(count,viewer) {
+  if(count===1)return [{seat:1,position:'bottom',angle:0}];
+  if(count>4) return Array.from({length:count},(_,i)=>({seat:i+1,position:i+1===viewer?'bottom':'ring',angle:((i+1-viewer+count)%count)*360/count}));
   const slots=count===2?[0,2]:count===3?[0,1,3]:[0,1,2,3],origin=slots[viewer-1]??0;
   return slots.map((slot,i)=>({seat:i+1,position:['bottom','left','top','right'][(slot-origin+4)%4]}));
 }
@@ -37,10 +39,14 @@ function take(g,seat,amount,rng) {
   if(bananas) g.message+=` 踩中 ${bananas} 张香蕉，额外摸牌。`;
   return drawn;
 }
-function record(g,seat,action,extra={}) {const entry={number:g.moves.length+1,player:seat,action,...extra};g.moves.push(entry);g.last=entry;}
+function thawCurrentPlayer(g) {
+  if(g.pending?.type!=='skip')g.frozenSeats=(g.frozenSeats||[]).filter(seat=>seat!==g.turn);
+}
+function record(g,seat,action,extra={}) {thawCurrentPlayer(g);const entry={number:g.moves.length+1,player:seat,action,...extra};g.moves.push(entry);g.last=entry;}
 export function newUno(count=4,rng,first=1) {
-  if(![2,3,4].includes(count)||typeof rng!=='function') throw new Error('需要 2～4 人和洗牌随机源');
-  const g={kind:'uno',count,hands:Array.from({length:count},()=>[]),deck:shuffle(unoDeck(),rng),discard:[],top:null,turn:first,direction:1,color:'red',phase:'play',drawnId:null,pending:null,resume:null,bombs:[],status:'playing',winner:0,reason:'',moves:[],last:null,message:'每人七张，先出完手牌获胜。',stalled:0};
+  if(!Number.isSafeInteger(count)||count<2||count>8||typeof rng!=='function') throw new Error('需要 2～8 人和洗牌随机源');
+  const deck=Array.from({length:Math.ceil(count/4)},(_,pack)=>unoDeck().map(c=>({...c,id:pack?`p${pack}-${c.id}`:c.id}))).flat();
+  const g={kind:'uno',count,hands:Array.from({length:count},()=>[]),deck:shuffle(deck,rng),discard:[],top:null,turn:first,direction:1,color:'red',phase:'play',drawnId:null,pending:null,resume:null,bombs:[],frozenSeats:[],status:'playing',winner:0,reason:'',moves:[],last:null,message:'每人七张，先出完手牌获胜。',stalled:0};
   for(let n=0;n<7;n++) for(let seat=1;seat<=count;seat++) take(g,seat,1,rng);
   // Start on a number card so no player is penalized before their first turn.
   let top=g.deck.pop();while(UNO_LABELS[top.value]) {g.deck.unshift(top);top=g.deck.pop();}
@@ -54,11 +60,12 @@ export function unoCanPlay(g,seat,card) {
 }
 function finish(g,seat) {
   if(g.hands[seat-1].length) return;
-  g.status='finished';g.phase='finished';g.winner=seat;g.reason='empty';g.pending=null;g.resume=null;
+  g.status='finished';g.phase='finished';g.winner=seat;g.reason='empty';g.pending=null;g.resume=null;g.frozenSeats=[];
   g.message+=` ${seat} 号位出完手牌，赢得本局！`;
 }
 function accept(g,seat,rng) {
   const p=g.pending;let amount=0;
+  if(p.type==='skip')g.frozenSeats=[...new Set([...(g.frozenSeats||[]),seat])];
   if(p.type==='taser') {
     // Each successful iteration consumes a card; recycle cannot loop over cards in hands.
     for(;;) {const cards=take(g,seat,1,rng);amount+=cards.length;if(!cards.length||cards.some(c=>c.color===p.color||c.color==='wild')) break;}
@@ -67,6 +74,7 @@ function accept(g,seat,rng) {
   g.pending=null;g.drawnId=null;g.phase='play';
   if(g.resume) {Object.assign(g,g.resume);g.resume=null;}
   else g.turn=unoNext(g,seat);
+  thawCurrentPlayer(g);
   return amount;
 }
 // Server time drives bombs. Normal turns never have a deadline.
@@ -130,13 +138,14 @@ export function actUno(g,seat,input,rng,now=Date.now()) {
     if(value==='reverse') {g.direction*=-1;g.message+=g.direction===1?' 改为顺时针。':' 改为逆时针。';}
     g.turn=unoNext(g,seat,value==='reverse'&&g.count===2?2:1);
   }
-  record(g,seat,action,{card:publicCard(card),effect:value,color:g.color,direction:g.direction});
+  // Public animation metadata contains seats/effects only, never hidden draw identities.
+  record(g,seat,action,{card:publicCard(card),effect:value,color:g.color,direction:g.direction,target:g.pending?g.turn:null,targetEffect:g.pending?.type||null});
   finish(g,seat);
   if(g.status==='playing'&&g.pending?.type==='skip'&&!g.hands[g.turn-1].some(c=>c.value==='potion')) accept(g,g.turn,rng);
 }
 export function unoSnapshot(g,seat) {
   const hand=g.hands[seat-1]||[];
-  return {kind:'uno',count:g.count,hand:hand.map(publicCard),handCounts:g.hands.map(h=>h.length),deckCount:g.deck.length,top:publicCard(g.top),turn:g.turn,direction:g.direction,color:g.color,phase:g.phase,drawnId:g.turn===seat?g.drawnId:null,pending:g.pending?{...g.pending}:null,bombs:g.bombs.map(b=>({id:b.card.id})),status:g.status,winner:g.winner,reason:g.reason,message:g.message,moves:g.moves.map(m=>({...m})),last:g.last,legalIds:hand.filter(c=>unoCanPlay(g,seat,c)).map(c=>c.id)};
+  return {kind:'uno',count:g.count,frozenSeats:[...(g.frozenSeats||[])],hand:hand.map(publicCard),handCounts:g.hands.map(h=>h.length),deckCount:g.deck.length,top:publicCard(g.top),turn:g.turn,direction:g.direction,color:g.color,phase:g.phase,drawnId:g.turn===seat?g.drawnId:null,pending:g.pending?{...g.pending}:null,bombs:g.bombs.map(b=>({id:b.card.id})),status:g.status,winner:g.winner,reason:g.reason,message:g.message,moves:g.moves.map(m=>({...m})),last:g.last,legalIds:hand.filter(c=>unoCanPlay(g,seat,c)).map(c=>c.id)};
 }
 export function chooseUnoMove(g) {
   if(g.status!=='playing') return null;
