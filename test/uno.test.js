@@ -20,6 +20,52 @@ test('party deck, opening deal and privacy: no crossbow, arrows or classic +4',(
 test('view rotation keeps every viewer bottom and same physical direction',()=>{
   for(let count=2;count<=4;count++)for(let viewer=1;viewer<=count;viewer++){const seats=unoSeatPositions(count,viewer);assert.equal(seats[viewer-1].position,'bottom');assert.equal(new Set(seats.map(s=>s.position)).size,count);const slots=['bottom','left','top','right'];for(let i=0;i<count;i++){const a=slots.indexOf(seats[i].position),b=slots.indexOf(seats[(i+1)%count].position);assert.ok((b-a+4)%4>0);}}
 });
+test('larger tables scale unique decks and rotate all seats without changing order',()=>{
+  for(const count of [5,6,7,8]) {
+    const g=newUno(count,randomInt),cards=total(g);
+    assert.equal(cards.length,Math.ceil(count/4)*120);assert.equal(new Set(cards.map(c=>c.id)).size,cards.length);
+    assert.ok(g.hands.every(h=>h.length===7));assert.match(g.top.value,/^\d$/);
+    const s=unoSnapshot(g,count);assert.equal(s.hand.length,7);assert.equal(s.handCounts.length,count);
+    for(const c of g.hands[0])assert.equal(JSON.stringify(s).includes('"'+c.id+'"'),false);
+    for(const viewer of [1,count]) {
+      const seats=unoSeatPositions(count,viewer);assert.equal(seats.length,count);assert.equal(seats[viewer-1].angle,0);
+      assert.equal(new Set(seats.map(p=>p.angle)).size,count);
+      for(let i=0;i<count;i++)assert.ok(Math.abs((seats[(i+1)%count].angle-seats[i].angle+360)%360-360/count)<1e-8);
+    }
+    for(let n=0;n<100&&g.status==='playing';n++)actUno(g,g.turn,chooseUnoMove(g),randomInt);
+    assert.equal(new Set(total(g).map(c=>c.id)).size,cards.length);
+  }
+  for(const count of [0,1,-1,2.5,9,100,Infinity])assert.throws(()=>newUno(count,rng));
+});
+test('target metadata survives immediate freeze and potion transfers; draws reveal counts only',()=>{
+  const g=game(8);play(g,1,give(g,1,'skip'));
+  assert.equal(g.turn,3);assert.equal(g.last.target,2);assert.equal(g.last.targetEffect,'skip');
+  g.turn=1;const potion=give(g,2,'potion','wild');play(g,1,give(g,1,'taser','wild'),'yellow');play(g,2,potion);
+  assert.equal(g.last.target,3);assert.equal(g.last.targetEffect,'taser');
+  const secret=card('1','yellow');g.deck=[secret];actUno(g,3,{action:'take-penalty'},rng);
+  assert.equal(g.last.amount,1);assert.equal(JSON.stringify(unoSnapshot(g,1)).includes(secret.id),false);
+});
+test('open lobby admits eight players, deals on start, rejects mid-game joins and keeps rematch count',async t=>{
+  const {server,tableRooms}=createGameServer({scoreFile:null});server.listen(0,'127.0.0.1');await once(server,'listening');
+  t.after(async()=>{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));});
+  const base=`http://127.0.0.1:${server.address().port}`;
+  const post=async(action,data={},token)=>{const res=await fetch(base+'/api/table/'+action,{method:'POST',headers:{'Content-Type':'application/json',...(token?{Authorization:'Bearer '+token}:{})},body:JSON.stringify(data)});return {http:res.status,...await res.json()};};
+  const host=await post('create',{kind:'uno'}),r=tableRooms.get(host.code),players=[host];
+  assert.equal(host.count,1);assert.equal(host.game.hand.length,0);
+  await post('auto',{room:host.code,enabled:true},host.token);
+  assert.equal((await post('start',{room:host.code},host.token)).http,400);
+  for(let i=1;i<8;i++)players.push(await post('join',{kind:'uno',room:host.code}));
+  assert.equal((await post('join',{kind:'uno',room:host.code})).http,400);
+  assert.equal(r.count,8);assert.ok(r.game.hands.every(h=>h.length===0));
+  for(const p of players)await post('auto',{room:host.code,enabled:true},p.token);
+  assert.equal((await post('start',{room:host.code},players[1].token)).http,400);
+  const started=await post('start',{room:host.code},host.token);assert.equal(started.http,200);assert.deepEqual(started.game.handCounts,Array(8).fill(7));
+  assert.equal((await post('join',{kind:'uno',room:host.code})).http,400);
+  r.game.status='finished';
+  for(const p of players)assert.equal((await post('rematch',{room:host.code},p.token)).http,200);
+  assert.equal(r.round,2);assert.equal(r.game.count,8);assert.ok(r.game.hands.every(h=>h.length===7));
+  assert.equal((await fetch(base+'/uno-motion.js')).status,200);
+});
 test('illegal cards, foreign cards, wrong turn and invalid color never mutate game',()=>{
   const g=game();const before=JSON.stringify(g);assert.throws(()=>actUno(g,2,{action:'draw'},rng));assert.throws(()=>play(g,1,g.hands[1][0]));assert.throws(()=>play(g,1,g.hands[0][0]));assert.equal(JSON.stringify(g),before);
   const wild=give(g,1,'taser','wild'),next=JSON.stringify(g);assert.throws(()=>play(g,1,wild,'purple'));assert.equal(JSON.stringify(g),next);
@@ -35,6 +81,17 @@ test('cross-color shovel stack and potion preserve accumulated penalty',()=>{
 test('freeze is skipped immediately without defense, or transferred with potion',()=>{
   let g=game();play(g,1,give(g,1,'skip'));assert.equal(g.turn,3);assert.equal(g.pending,null);
   g=game();const p=give(g,2,'potion','wild');play(g,1,give(g,1,'skip'));assert.equal(g.turn,2);assert.equal(g.pending.type,'skip');play(g,2,p);assert.equal(g.turn,4);
+});
+test('freeze remains public through other turns and reconnects, then thaws on the next actionable turn',()=>{
+  const g=game();play(g,1,give(g,1,'skip'));assert.deepEqual(g.frozenSeats,[2]);
+  assert.deepEqual(unoSnapshot(g,4).frozenSeats,[2]);
+  play(g,3,give(g,3,'4'));assert.deepEqual(g.frozenSeats,[2]);
+  play(g,4,give(g,4,'4'));assert.deepEqual(g.frozenSeats,[2]);
+  play(g,1,give(g,1,'4'));assert.equal(g.turn,2);assert.deepEqual(g.frozenSeats,[]);
+  const h=game(),potion=give(h,2,'potion','wild');play(h,1,give(h,1,'skip'));
+  assert.deepEqual(h.frozenSeats,[]);play(h,2,potion);assert.deepEqual(h.frozenSeats,[3]);
+  // Reversing brings the frozen seat's next normal turn forward; it must thaw then.
+  play(h,4,give(h,4,'reverse','green'));assert.equal(h.turn,3);assert.deepEqual(h.frozenSeats,[]);
 });
 test('taser draws until its chosen color or wild and cannot be changed by potion',()=>{
   const g=game();const p=give(g,2,'potion','wild');play(g,1,give(g,1,'taser','wild'),'yellow');play(g,2,p,'blue');assert.equal(g.pending.color,'yellow');g.deck=[card('2','yellow'),card('8','red'),card('9','blue')];const n=g.hands[2].length;actUno(g,3,{action:'take-penalty'},rng);assert.equal(g.hands[2].length,n+3);assert.equal(g.turn,4);
