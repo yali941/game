@@ -5,6 +5,7 @@ import { chooseUnoMove } from './uno-rules.js';
 // Deterministic, legal moves for optional assistance. Rules still validate every move.
 export function chooseAutoMove(game) {
   if (game.status !== 'playing') return null;
+  if (game.kind === 'oldmaid') return {action:'draw'}; // Server chooses a random position without inspecting ranks.
   if (game.kind === 'uno') return chooseUnoMove(game);
   if (game.kind === 'flight') {
     if (game.phase === 'roll') return { action:'roll' };
