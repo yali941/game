@@ -75,6 +75,9 @@ test('matching color or symbol, reverse direction and two-player reverse extra t
   g=game();play(g,1,give(g,1,'reverse'));assert.equal(g.direction,-1);assert.equal(g.turn,4);
   g=game(2);play(g,1,give(g,1,'reverse'));assert.equal(g.direction,-1);assert.equal(g.turn,1);
 });
+test('wild card face adopts the selected colour while keeping its special identity',()=>{
+  const g=game(),wild=give(g,1,'potion','wild');play(g,1,wild,'blue');assert.equal(g.color,'blue');assert.equal(g.top.color,'blue');assert.equal(g.top.value,'potion');assert.equal(g.last.card.color,'wild');assert.equal(g.last.card.value,'potion');
+});
 test('cross-color shovel stack and potion preserve accumulated penalty',()=>{
   const g=game();const a=give(g,1,'draw2'),b=give(g,2,'draw2','blue'),p=give(g,3,'potion','wild');play(g,1,a);assert.equal(g.pending.amount,2);assert.equal(unoCanPlay(g,2,give(g,2,'taser','wild')),false);play(g,2,b);assert.equal(g.pending.amount,4);play(g,3,p);assert.equal(g.turn,4);assert.equal(g.pending.amount,4);const n=g.hands[3].length;actUno(g,4,{action:'take-penalty'},rng);assert.equal(g.hands[3].length,n+4);assert.equal(g.turn,1);assert.equal(g.pending,null);
 });
@@ -110,8 +113,8 @@ test('egg resolves each supported outcome without adding banned cards',()=>{
 test('bomb expires on server clock, adds four and preserves the interrupted turn',()=>{
   const g=game();play(g,1,give(g,1,'bomb','wild'));assert.equal(g.bombs.length,1);assert.equal(tickUno(g,rng,19999),false);const seat=g.turn,n=g.hands[seat-1].length;assert.equal(tickUno(g,rng,35001),true);assert.equal(g.bombs.length,0);assert.equal(g.hands[seat-1].length,n+4);assert.equal(g.turn,seat);assert.equal(g.pending,null);
 });
-test('bomb can be passed by potion and restores a suspended shovel stack',()=>{
-  const g=game();play(g,1,give(g,1,'bomb','wild'));const potion=give(g,3,'potion','wild');play(g,2,give(g,2,'draw2','green'));assert.equal(g.turn,3);tickUno(g,rng,40000);assert.equal(g.pending.type,'bomb');play(g,3,potion,'red');assert.equal(g.turn,4);const n=g.hands[3].length;actUno(g,4,{action:'take-penalty'},rng);assert.equal(g.hands[3].length,n+4);assert.equal(g.turn,3);assert.equal(g.pending.type,'draw2');assert.equal(g.pending.amount,2);
+test('bomb cannot be avoided by potion and restores a suspended shovel stack',()=>{
+  const g=game();play(g,1,give(g,1,'bomb','wild'));const potion=give(g,3,'potion','wild');play(g,2,give(g,2,'draw2','green'));assert.equal(g.turn,3);tickUno(g,rng,40000);assert.equal(g.last.action,'explosion');assert.equal(g.last.unavoidable,true);assert.equal(g.last.amount,4);assert.equal(g.hands[2].includes(potion),true);assert.equal(g.turn,3);assert.equal(g.pending.type,'draw2');assert.equal(g.pending.amount,2);
 });
 test('winning last action ends immediately; no future bombs or moves can change result',()=>{
   const g=game();g.hands[0]=[card('draw2')];play(g,1,g.hands[0][0]);assert.equal(g.status,'finished');assert.equal(g.winner,1);assert.equal(g.pending,null);const before=JSON.stringify(g);assert.equal(tickUno(g,rng,1e12),false);assert.throws(()=>actUno(g,2,{action:'draw'},rng));assert.equal(JSON.stringify(g),before);
