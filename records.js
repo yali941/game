@@ -2,7 +2,7 @@ import { randomBytes, createHash } from 'node:crypto';
 import { readFileSync, writeFileSync, mkdirSync, renameSync, existsSync } from 'node:fs';
 import { dirname } from 'node:path';
 
-const kinds = ['gomoku', 'flight', 'jungle', 'uno'];
+const kinds = ['gomoku', 'flight', 'jungle', 'uno', 'oldmaid'];
 const hash = token => createHash('sha256').update(token).digest('hex');
 export function createRecords({ scoreFile = process.env.SCORE_FILE || './data/rankings.json' } = {}) {
   let data = { since: new Date().toISOString(), profiles: {} };
@@ -27,21 +27,26 @@ export function createRecords({ scoreFile = process.env.SCORE_FILE || './data/ra
     if (!p) {
       if (Object.keys(data.profiles).length >= 20000) throw new Error('玩家名额暂时已满');
       token = randomBytes(32).toString('hex');
-      p = { id: randomBytes(8).toString('hex'), name: name || `棋友${randomBytes(2).toString('hex').toUpperCase()}`, wins: { gomoku: 0, flight: 0, jungle: 0, uno: 0 } };
+      p = { id: randomBytes(8).toString('hex'), name: name || `棋友${randomBytes(2).toString('hex').toUpperCase()}`, wins: { gomoku: 0, flight: 0, jungle: 0, uno: 0, oldmaid: 0 } };
       data.profiles[hash(token)] = p; save();
     } else if (name && name !== p.name) { p.name = name; save(); }
     return { token, id: p.id, name: p.name, wins: p.wins };
   };
   const victory = (room, kind, getSeat) => {
+    if(kind==='oldmaid' && (room.game.reason==='leave'||!room.game.loser)) return;
     if (room.recordedRound === room.round || room.game.status !== 'finished' || !room.game.winner) return;
     room.recordedRound = room.round;
     const ids = room.players.map(p => p?.profileId);
     // A browser cannot earn wins by playing itself in another tab. Empty games
     // and local play are not ranked. Rooms never accept client-reported wins.
     if (!room.game.moves.length || ids.some(id => !id) || new Set(ids).size !== ids.length) return;
-    const winner = room.players.find(p => getSeat(p) === room.game.winner);
-    const profile = Object.values(data.profiles).find(p => p.id === winner?.profileId);
-    if (profile) { profile.wins[kind]++; save(); }
+    const winners=kind==='oldmaid'?room.game.winners:[room.game.winner];
+    for(const seat of winners) {
+      const winner=room.players.find(p=>getSeat(p)===seat);
+      const profile=Object.values(data.profiles).find(p=>p.id===winner?.profileId);
+      if(profile) profile.wins[kind]++;
+    }
+    save();
   };
   const board = (kind, req) => {
     if (!kinds.includes(kind)) throw new Error('未知游戏');
