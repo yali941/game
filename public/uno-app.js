@@ -6,6 +6,12 @@ const $=id=>document.getElementById(id), colors={red:'#c2463e',yellow:'#dea62b',
 const empty={kind:'uno',count:4,turn:0,direction:1,color:'',hand:[],handCounts:[0,0,0,0],legalIds:[],bombs:[],moves:[],status:'waiting',message:'邀请朋友，开始这一局。'};
 let room=null,token='',stream=null,transport=false,busy=false,selected=null,toastTimer,handKey='',seatKey='',lastTop='',lastDirection=1,lastRound='',refreshing=false;
 const team=seat=>({name:`${seat} 号位`,color:UNO_COLORS[(seat-1)%4]});
+const handSort=(a,b)=>{
+  const special=value=>['skip','reverse','draw2'].includes(value);
+  const rank=c=>c.color==='wild'?2:special(c.value)?1:0;
+  const color=a=>a.color==='wild'?9:UNO_COLORS.indexOf(a.color);
+  return rank(a)-rank(b)||color(a)-color(b)||String(a.value).localeCompare(String(b.value),undefined,{numeric:true})||String(a.id).localeCompare(String(b.id));
+};
 const motion=createUnoMotion({board:$('board-wrap'),cardNode});
 const name=seat=>room?.players[seat-1]?.name||`${seat} 号位`;
 function say(message) {$('toast').textContent=message;$('toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').hidden=true,4000);}
@@ -31,6 +37,10 @@ function connect() {
   render();
 }
 function animateEffect(symbol) {const node=document.createElement('span');node.className='table-effect';node.textContent=symbol;$('table-effects').append(node);setTimeout(()=>node.remove(),2100);}
+function animateExplosion() {
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const node=document.createElement('span');node.className='center-explosion';node.textContent='💥';node.setAttribute('aria-hidden','true');$('uno-center').append(node);setTimeout(()=>node.remove(),1000);
+}
 const ui=createRoomUI({kind:'uno',send,refresh:()=>render(),playLocal:()=>{}});
 const active=()=>Boolean(room?.started&&!room.closed&&transport&&!busy&&room.game.status==='playing'&&room.players.every(p=>p&&!p.gone&&(p.connected||p.auto))&&!room.players[room.yourSeat-1]?.auto);
 function cardNode(card,button=false) {
@@ -57,17 +67,18 @@ function render() {
   $('reactions-panel').hidden=!room||room.closed;
   document.querySelectorAll('[data-reaction]').forEach(b=>b.disabled=!transport||busy||!room?.players.every(p=>p&&(p.connected||p.auto)));
   $('status-title').textContent=!room?'牌桌已备好':room.closed?'房间已关闭':!room.started?`等朋友入座 · 已有 ${present} 人`:g.status==='finished'?(g.winner?`${name(g.winner)} 获胜`:'本局结束'):!room.players.every(p=>p&&(p.connected||p.auto))?'等待断线玩家重连':isTurn?'轮到你出牌':`${name(g.turn)} 的回合`;
+  const gameOver=$('uno-game-over');gameOver.hidden=!(room?.started&&g.status==='finished');gameOver.querySelector('strong').textContent=g.winner?`${name(g.winner)} 获胜`:'本局结束';
   $('status-detail').textContent=(g.message||'').replace(/(\d+) 号位/g,(_,n)=>name(Number(n)));
   $('table-empty').hidden=Boolean(room);
   const direction=$('direction');direction.setAttribute('aria-label',g.direction===1?'出牌顺时针':'出牌逆时针');
   const arrow=direction.querySelector('b');arrow.textContent=g.direction===1?'↻':'↺';
   if(lastDirection!==g.direction) {arrow.classList.remove('direction-flip');void arrow.offsetWidth;arrow.classList.add('direction-flip');lastDirection=g.direction;}
   $('active-color').textContent=g.color?`当前 · ${UNO_COLOR_NAMES[g.color]}色`:'等待开局';$('active-color').style.setProperty('--chip',colors[g.color]||'#c7c9a4');
-  $('bomb-status').hidden=!g.bombs.length;$('bomb-status').textContent=`💣 ${g.bombs.length>1?g.bombs.length+' 枚 · ':''}引信燃烧中`;
+  $('bomb-status').hidden=!g.bombs.length;$('bomb-status').innerHTML=`<b aria-hidden="true">💣</b><span>${g.bombs.length>1?g.bombs.length+' 枚炸弹':'炸弹引信燃烧中'}</span>`;
   const p=g.pending;
   $('draw-penalty').hidden=p?.type!=='draw2';$('draw-penalty').textContent=p?.type==='draw2'?`+${p.amount}`:'';
   $('draw-penalty').setAttribute('aria-label',`累计罚摸 ${p?.amount||0} 张`);
-  $('penalty-note').textContent=!p?'':p.type==='draw2'?`累计 +${p.amount} · 接铲子 / 隐身可传递`:p.type==='taser'?`电击 · 摸到${UNO_COLOR_NAMES[p.color]}色或万能牌`:p.type==='bomb'?'炸弹爆炸 · +4 / 隐身传递':'冰冻 · 跳过 / 隐身传递';
+  $('penalty-note').textContent=!p?'':p.type==='draw2'?`累计 +${p.amount} · 接铲子 / 隐身可传递`:p.type==='taser'?`电击 · 摸到${UNO_COLOR_NAMES[p.color]}色或万能牌`:p.type==='bomb'?'炸弹爆炸 · +4 / 隐身无法规避':'冰冻 · 跳过 / 隐身可传递';
   $('take-button').hidden=!(room?.started&&p&&isTurn&&g.status==='playing');$('take-button').disabled=!can;
   $('take-button').textContent=p?.type==='skip'?'接受冰冻 · 跳过':p?.type==='taser'?'接受电击 · 摸牌':`摸 ${p?.amount||0} 张罚牌`;
   $('pass-button').hidden=!(room?.started&&isTurn&&g.phase==='drawn');$('pass-button').disabled=!can;
@@ -95,9 +106,9 @@ function render() {
   pointer.hidden=!room?.started||g.status!=='playing'||!actor;
   if(actor){const angle=actor.angle??angles[actor.position],radians=angle*Math.PI/180;pointer.style.left=`${50-23*Math.sin(radians)}%`;pointer.style.top=`${50+23*Math.cos(radians)}%`;pointer.style.setProperty('--point-angle',`${angle+90}deg`);pointer.setAttribute('aria-label',`当前出牌：${name(g.turn)}`);}
   const currentTop=JSON.stringify([room?.code,room?.round,g.top,g.last?.number]);
-  if(currentTop!==lastTop) {const animate=lastTop&&lastRound===`${room?.code}:${room?.round}`&&g.last?.action==='play';lastTop=currentTop;lastRound=`${room?.code}:${room?.round}`;$('discard').replaceChildren();if(g.top) {const card=cardNode(g.top);if(animate)card.classList.add('card-arrive');$('discard').append(card);}if(g.last?.action==='explosion')animateEffect('💥');}
-  const visibleHand=room?.started?g.hand:[],nextHandKey=JSON.stringify([visibleHand,g.legalIds,can,room?.started]);
-  if(nextHandKey!==handKey) {handKey=nextHandKey;const scroll=$('uno-hand').scrollLeft;$('uno-hand').replaceChildren();for(const card of visibleHand) {
+  if(currentTop!==lastTop) {const animate=lastTop&&lastRound===`${room?.code}:${room?.round}`&&g.last?.action==='play';lastTop=currentTop;lastRound=`${room?.code}:${room?.round}`;$('discard').replaceChildren();if(g.top) {const card=cardNode(g.top);if(animate)card.classList.add('card-arrive');$('discard').append(card);}if(g.last?.action==='explosion'){animateEffect('💥');animateExplosion();}}
+  const visibleHand=room?.started?g.hand:[],sortedHand=[...visibleHand].sort(handSort),nextHandKey=JSON.stringify([sortedHand,g.legalIds,can,room?.started]);
+  if(nextHandKey!==handKey) {handKey=nextHandKey;const scroll=$('uno-hand').scrollLeft;$('uno-hand').replaceChildren();for(const card of sortedHand) {
     const node=cardNode(card,true),legal=g.legalIds.includes(card.id);node.disabled=!(can&&legal);node.classList.toggle('playable',can&&legal);node.addEventListener('click',()=>play(card));$('uno-hand').append(node);
   }if(!visibleHand.length) {const note=document.createElement('span');note.className='small-note';note.textContent=room?.started?'手牌已出完':'入座开局后，在这里查看自己的手牌。';$('uno-hand').append(note);}$('uno-hand').scrollLeft=scroll;}
   if(selected&&(!can||!g.legalIds.includes(selected.id)||selected.version!==room.version)) {$('color-dialog').close();selected=null;}
