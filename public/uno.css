@@ -127,6 +127,11 @@ body.uno{background:radial-gradient(ellipse at 14% 0,#dce8df,transparent 60%),#e
 .uno .uno-direction b{font-size:24px}
 .uno .seat-hand{height:26px;width:60px}.uno .seat-hand .mini-back{width:17px;height:24px;left:calc(50% - 8.5px)}
 .uno .uno-seat small:empty{display:none}
+.uno-game-over{position:absolute;inset:0;z-index:10;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:8px;border-radius:50%;background:#123f3bd9;color:#fff4c4;text-align:center;pointer-events:none}
+.uno-game-over span{font:700 26px/1.2 Georgia,'SimSun',serif;letter-spacing:3px}.uno-game-over strong{font-size:12px;color:#f4dda0}
+.uno #bomb-status{display:flex;align-items:center;gap:5px;padding:5px 9px;border:1px solid #f4b06b;border-radius:16px;background:#632f2ccc;color:#ffe4a8;font-weight:700;box-shadow:0 0 12px #f16c3d88;animation:bomb-pulse 1s ease-in-out infinite}.uno #bomb-status b{font-size:22px;line-height:1}.uno #bomb-status span{font-size:9px}
+.center-explosion{position:absolute;left:50%;top:50%;z-index:15;transform:translate(-50%,-50%);font-size:70px;pointer-events:none;animation:center-explosion .9s ease-out both}
+@keyframes center-explosion{0%{opacity:0;transform:translate(-50%,-50%) scale(.35) rotate(-20deg)}25%{opacity:1;transform:translate(-50%,-50%) scale(1.25) rotate(8deg)}70%{opacity:1;transform:translate(-50%,-50%) scale(1) rotate(-4deg)}100%{opacity:0;transform:translate(-50%,-50%) scale(1.5) rotate(12deg)}}
 .turn-pointer{position:absolute;width:26px;height:20px;transform:translate(-50%,-50%) rotate(var(--point-angle));z-index:4;pointer-events:none;filter:drop-shadow(0 2px 3px #001f28a0)}
 .turn-pointer svg{display:block;width:100%;height:100%;fill:#f3de8c;stroke:#fff0b0;stroke-width:.7}
 .uno .draw-penalty{position:absolute;top:-9px;right:-12px;min-width:26px;padding:3px 5px;border:1px solid #ffe9ac;border-radius:7px;background:#a34836;color:#fff2c6;font:bold 12px/1.1 Arial,sans-serif;z-index:3;box-shadow:0 2px 5px #092a2a90}
@@ -135,6 +140,7 @@ body.uno{background:radial-gradient(ellipse at 14% 0,#dce8df,transparent 60%),#e
 .uno .is-frozen small{color:#baf1ff}
 .uno #draw-button{overflow:visible}.uno #draw-button:after{content:'';position:absolute;inset:-5px}
 @media(max-width:700px){
+  .center-explosion{font-size:48px}
   .uno .pile-row{gap:14px}.uno .pile-row .uno-card{width:38px;height:54px;border-width:2px;padding:3px}
   .uno .pile-row .card-symbol{font-size:20px}.uno .pile-row .card-caption{font-size:5px}.uno .card-back>span{font-size:12px}
   .uno .uno-direction{top:calc(50% - 53px);width:22px;height:22px}.uno .uno-direction b{font-size:20px}

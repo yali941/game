@@ -54,7 +54,7 @@ export function newUno(count=4,rng,first=1) {
 }
 export function unoCanPlay(g,seat,card) {
   if(g.status!=='playing'||seat!==g.turn||!card||!g.hands[seat-1]?.some(c=>c.id===card.id)) return false;
-  if(g.pending) return card.value==='potion'||(g.pending.type==='draw2'&&card.value==='draw2');
+  if(g.pending) return g.pending.type!=='bomb'&&(card.value==='potion'||(g.pending.type==='draw2'&&card.value==='draw2'));
   if(g.phase==='drawn'&&card.id!==g.drawnId) return false;
   return card.color==='wild'||card.color===g.color||card.value===g.top.value;
 }
@@ -84,10 +84,9 @@ export function tickUno(g,rng,now=Date.now()) {
   const [bomb]=g.bombs.splice(index,1);g.discard.push(bomb.card);
   g.resume={turn:g.turn,phase:g.phase,pending:g.pending,drawnId:g.drawnId};
   g.pending={type:'bomb',amount:4};g.phase='penalty';
-  g.message=`炸弹在 ${g.turn} 号位面前爆炸！摸四张，或用隐身药水传递。`;
-  // No response is needed when there is no defensive card; keep the interrupted turn.
-  if(!g.hands[g.turn-1].some(c=>c.value==='potion')) {const target=g.turn;const amount=accept(g,target,rng);record(g,target,'explosion',{amount});}
-  else record(g,g.turn,'explosion',{amount:0});
+  g.message=`炸弹在 ${g.turn} 号位面前爆炸！隐身药水无法规避，直接摸四张。`;
+  // A bomb is unavoidable: even a potion in hand cannot pass or cancel it.
+  const target=g.turn;const amount=accept(g,target,rng);record(g,target,'explosion',{amount,unavoidable:true});
   return true;
 }
 export function actUno(g,seat,input,rng,now=Date.now()) {
@@ -123,7 +122,9 @@ export function actUno(g,seat,input,rng,now=Date.now()) {
     const outcomes=['0','1','2','3','4','5','6','7','8','9','skip','reverse','draw2','taser','bomb','banana','potion'];
     value=outcomes[rng(outcomes.length)];g.message+=` 惊喜蛋变为${UNO_LABELS[value]||value}！`;
   }
-  g.top={...publicCard(card),value};
+  // Wild cards keep their rule identity in the move log, while the table face
+  // adopts the chosen colour so everyone can read the next playable colour.
+  g.top={...publicCard(card),color:g.color,value};
   if(value==='banana') {card.armed=true;g.deck.splice(rng(g.deck.length+1),0,card);g.message+=' 香蕉已埋入摸牌堆。';}
   else if(value==='bomb') {g.bombs.push({card,deadline:now+20000+rng(15001)});g.message+=' 引信已点燃。';}
   else g.discard.push(card);
