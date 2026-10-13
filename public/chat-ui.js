@@ -8,7 +8,7 @@ export function createRoomUI({kind,send,refresh,playLocal}) {
   const ranking=document.querySelector('.ranking-panel'),roomPanel=document.getElementById('room-panel');
   roomPanel.before(panel);ranking.before(roomPanel);
   const controls=document.createElement('div');controls.className='auto-controls';controls.id='auto-controls';controls.setAttribute('aria-label','托管控制');
-  if(kind==='flight'||kind==='uno') document.getElementById('game-actions').before(controls);
+  if(kind==='flight'||kind==='uno'||kind==='oldmaid') document.getElementById('game-actions').before(controls);
   else document.querySelector('.board-dock').append(controls);
   const el=id=>panel.querySelector('#'+id);
   const mobileUI=createMobileUI(panel);
@@ -64,7 +64,7 @@ export function createRoomUI({kind,send,refresh,playLocal}) {
       const button=document.createElement('button'),active=isAuto(seat),rank=(game.finishOrder||[]).indexOf(seat)+1;
       button.className='auto-button team-'+team(seat).color;button.setAttribute('aria-pressed',String(active));
       button.textContent=local ? `${team(seat).name} · ${active?'取消托管':'托管'}` : active?'取消托管':'开启托管';
-      if(rank) button.textContent=`${team(seat).name} · 第 ${rank} 名`;
+      if(rank) button.textContent=kind==='oldmaid'?'已安全 · 观战中':`${team(seat).name} · 第 ${rank} 名`;
       button.disabled=Boolean(rank) || changing || game.status==='finished' || (!local && (!transport||room.closed));
       button.addEventListener('click',async()=>{
         if(local) {active?localAuto.delete(seat):localAuto.add(seat);cancel();refresh();return;}
