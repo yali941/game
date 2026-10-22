@@ -2,11 +2,12 @@ import { SIZE, newGame, playMove, resign, undoMove, agreeDraw, pass, toggleDead,
 import { profileReady, profileHeaders, refreshRankings } from './profile.js';
 import { setupTabletop, showBoardDialog, syncTabletop } from './tabletop-ui.js';
 import { createRoomUI } from './chat-ui.js';
+import { chooseGoMove } from './go-rules.js';
 
 const $ = id => document.getElementById(id);
 const svgNS = 'http://www.w3.org/2000/svg';
 let mode = 'online', room = null, session = null, localGame = newGame(), stream = null;
-let transport = false, pending = false, sound = false, audioContext, toastTimer, hover = null;
+let transport = false, pending = false, sound = false, audioContext, toastTimer, hover = null, aiTimer = null;
 let lastMoveCount = 0, confirmAction = null;
 let renderedStoneKey = '', lastRankedGame = '';
 let tentative = null, boardSnapshot = null, stoneDrop = null, stoneDropTimer;
@@ -14,11 +15,35 @@ let roomUI;
 let lastNoticeId = null, nextReactionAt = 0, reactionTimer, feedbackTimer;
 const reactions = { poop: { emoji: '💩', label: '扔了一个大便', impact: '💩' }, heart: { emoji: '❤️', label: '送来一颗爱心', impact: '💕' }, bomb: { emoji: '💣', label: '扔了一颗炸弹', impact: '💥' }, cry:{emoji:'😭',label:'发来哭哭脸',impact:'😭'} };
 const cells = [], labels = 'ABCDEFGHJKLMNOPQRST', STEP=560/(SIZE-1), R=STEP*.415;
-const game = () => mode === 'local' ? localGame : room?.game || newGame();
-const myColor = () => mode === 'local' ? localGame.turn : room?.yourColor;
+const game = () => mode === 'online' ? room?.game || newGame() : localGame;
+const myColor = () => mode === 'online' ? room?.yourColor : 1;
 const bothOnline = () => room?.players.every(p => (p?.connected||p?.auto) && !p.gone);
 const autoPlaying = () => mode==='local' ? roomUI?.isAuto(localGame.turn,localGame) : room?.players.find(p=>p?.color===myColor())?.auto;
-const canPlay = () => !pending && !stoneDrop && !autoPlaying() && game().status === 'playing' && game().phase==='play' && (mode === 'local' || (transport && room && !room.closed && !room.request && bothOnline() && game().turn === myColor()));
+const canPlay = () => !pending && !stoneDrop && !aiTimer && !autoPlaying() && game().status === 'playing' && game().phase==='play' && (mode !== 'online' ? game().turn === 1 : (transport && room && !room.closed && !room.request && bothOnline() && game().turn === myColor()));
+
+function scheduleAiMove() {
+  if (mode !== 'ai' || aiTimer || pending || stoneDrop || localGame.status !== 'playing') return;
+  if (localGame.phase === 'play' && localGame.turn === 2) {
+    aiTimer = setTimeout(() => {
+      aiTimer = null;
+      if (mode !== 'ai' || localGame.status !== 'playing' || localGame.phase !== 'play' || localGame.turn !== 2) { render(); return; }
+      try {
+        const move = chooseGoMove(localGame);
+        if (move?.action === 'pass') pass(localGame, 2);
+        else if (move) playMove(localGame, 2, move.x, move.y);
+        soundMove();
+      } catch (error) { toast(error.message); }
+      render();
+    }, 850);
+  } else if (localGame.phase === 'scoring' && localGame.confirmed.includes(1) && !localGame.confirmed.includes(2)) {
+    aiTimer = setTimeout(() => {
+      aiTimer = null;
+      if (mode !== 'ai' || localGame.status !== 'playing' || localGame.phase !== 'scoring' || !localGame.confirmed.includes(1)) { render(); return; }
+      try { confirmScore(localGame, 2); } catch (error) { toast(error.message); }
+      render();
+    }, 650);
+  }
+}
 
 function element(tag, attrs = {}, text = '') {
   const el = document.createElementNS(svgNS, tag);
@@ -111,13 +136,13 @@ function showReaction(reaction) {
   batch.append(flight, impact, caption); stage.append(batch);
   while (stage.children.length > 4) stage.firstElementChild.remove();
   setTimeout(() => batch.remove(), 2200);
-  const sender = mode === 'local' ? reaction.from === 1 ? '黑棋' : '白棋' : reaction.from === myColor() ? '你' : '对手';
+  const sender = mode !== 'online' ? reaction.from === 1 ? '黑棋' : '白棋' : reaction.from === myColor() ? '你' : '对手';
   $('reaction-feedback').textContent = `${sender}${effect.label} ${effect.emoji}`;
   clearTimeout(feedbackTimer);
   feedbackTimer = setTimeout(() => { $('reaction-feedback').textContent = '小小互动，不影响棋局'; }, 6000);
 }
 function requestAction(kind) {
-  if (mode === 'local') {
+  if (mode !== 'online') {
     if (kind === 'undo') confirm('双方同意悔棋？', '撤回最近一手，由刚才行棋的一方重新落子。', () => { undoMove(localGame, localGame.moves.findLast(m=>!m.resume).color); render(); }, '同意悔棋');
     else confirm('双方同意和棋？', '确认后本局以和棋结束，可以再来一局。', () => { agreeDraw(localGame); render(); }, '同意和棋');
   } else action(async () => { await api('request', { kind }); });
@@ -129,7 +154,7 @@ function respondToRequest(accept) {
 function sendReaction(kind) {
   if (pending || Date.now() < nextReactionAt) return;
   action(async () => {
-    if (mode === 'local') showReaction({ kind, from: localGame.turn });
+    if (mode !== 'online') showReaction({ kind, from: localGame.turn });
     else await api('reaction', { kind });
     nextReactionAt = Date.now() + 2000;
     clearTimeout(reactionTimer); reactionTimer = setTimeout(render, 2050);
@@ -186,7 +211,7 @@ function renderHover() {
   if (tentative) $('hover').append(element('circle', { cx:40+x*STEP,cy:40+y*STEP,r:STEP*.48,class:'tentative-ring' }));
 }
 function syncBoardInteraction() {
-  const g = game(), scope = mode === 'local' ? localGame : room ? room.code + ':' + room.round : 'lobby';
+  const g = game(), scope = mode !== 'online' ? localGame : room ? room.code + ':' + room.round : 'lobby';
   const signature = JSON.stringify([g.board, g.turn, g.status]);
   const before = boardSnapshot;
   boardSnapshot = { scope, signature, count:g.moves.length };
@@ -235,15 +260,17 @@ function renderBoard() {
   renderHover();
 }
 function render() {
+  scheduleAiMove();
   syncBoardInteraction();
-  const local = mode === 'local', seated = local || Boolean(room), g = game();
-  $('online-tab').classList.toggle('selected', !local); $('local-tab').classList.toggle('selected', local);
-  $('online-tab').setAttribute('aria-pressed', String(!local)); $('local-tab').setAttribute('aria-pressed', String(local));
+  const local = mode !== 'online', ai = mode === 'ai', seated = local || Boolean(room), g = game();
+  $('online-tab').classList.toggle('selected', !local); $('local-tab').classList.toggle('selected', mode === 'local'); $('ai-tab').classList.toggle('selected', ai);
+  $('online-tab').setAttribute('aria-pressed', String(!local)); $('local-tab').setAttribute('aria-pressed', String(mode === 'local')); $('ai-tab').setAttribute('aria-pressed', String(ai));
   document.querySelector('.sidebar').classList.toggle('local-mode', local);
+  document.querySelector('.sidebar').classList.toggle('ai-mode', ai);
   $('lobby').hidden = local || Boolean(room); $('room-panel').hidden = !room || local;
-  $('board-mode').textContent = local ? '同屏对弈' : room ? `棋室 ${room.code}` : '好友对弈';
+  $('board-mode').textContent = ai ? '人机对弈' : local ? '同屏对弈' : room ? `棋室 ${room.code}` : '好友对弈';
   $('mode-dot').classList.toggle('active', local || transport);
-  $('connection').textContent = local ? '同屏' : !room ? '未入座' : transport ? '已连接' : '重连中';
+  $('connection').textContent = ai ? 'AI 在线' : local ? '同屏' : !room ? '未入座' : transport ? '已连接' : '重连中';
   $('connection').classList.toggle('online', local || transport);
   if (room) {
     $('room-code').textContent = room.code; $('round-label').textContent = `第 ${room.round} 局`;
@@ -270,8 +297,8 @@ function render() {
     }
     else if(g.phase==='scoring'){title='终局数子 · 确认死活';detail='点棋子标记整块死子；双方确认后结算，有分歧可继续下。';symbol='◎';}
     else {
-      title = local ? `轮到${g.turn === 1 ? '黑棋' : '白棋'}落子` : g.turn === myColor() ? '轮到你落子' : '等对手落子';
-      detail = canPlay() ? '点一下选位，再点同一处落子。' : '没有倒计时，慢慢想就好。'; symbol = g.turn === 1 ? '●' : '○';
+      title = ai ? (g.turn === 1 ? '轮到你落子' : 'AI 正在思考') : local ? `轮到${g.turn === 1 ? '黑棋' : '白棋'}落子` : g.turn === myColor() ? '轮到你落子' : '等对手落子';
+      detail = canPlay() ? '点一下选位，再点同一处落子。' : ai && g.turn === 2 ? 'AI 正在寻找合法的围棋落子。' : '没有倒计时，慢慢想就好。'; symbol = g.turn === 1 ? '●' : '○';
     }
   }
   if (tentative) { title = `已选 ${labels[tentative[0]]}${SIZE-tentative[1]}`; detail = '再点同一处落子，点其他位置可改选。'; }
@@ -281,8 +308,8 @@ function render() {
   $('board-turn').textContent = seated ? title : '';
   for (const [color, key] of [[1, 'black'], [2, 'white']]) {
     const p = room?.players.find(p => p?.color === color);
-    $(`${key}-name`).textContent = !local && p ? p.name+(color===myColor()?' · 你':'') : color===1?'先手':'后手';
-    $(`${key}-state`).textContent = (local ? roomUI?.isAuto(color,localGame) : p?.auto) ? '托管中' : local ? '已入座' : p?.gone ? '已离开' : p ? p.connected ? '已入座' : '暂时离线' : '等待入座';
+    $(`${key}-name`).textContent = ai ? color === 1 ? '你' : 'AI' : !local && p ? p.name+(color===myColor()?' · 你':'') : color===1?'先手':'后手';
+    $(`${key}-state`).textContent = ai ? color === g.turn ? color === 1 ? '你的回合' : aiTimer ? '思考中' : '已落子' : '等待中' : (local ? roomUI?.isAuto(color,localGame) : p?.auto) ? '托管中' : local ? '已入座' : p?.gone ? '已离开' : p ? p.connected ? '已入座' : '暂时离线' : '等待入座';
     $(`${key}-player`).classList.toggle('active', seated && g.status === 'playing' && g.turn === color && (local || (transport && bothOnline())));
   }
   $('game-actions').hidden = !seated;
@@ -313,7 +340,7 @@ function render() {
   $('online-tab').disabled = pending; $('local-tab').disabled = pending;
   renderGoControls();
   renderBoard(); syncTabletop({ kind: 'gomoku', requestId: room?.request?.id });
-  roomUI?.sync({mode,room,transport,game:g,busy:pending||Boolean(stoneDrop),team:n=>({name:n===1?'黑棋':'白棋',color:n===1?'black':'white'})});
+  roomUI?.sync({mode: ai ? 'local' : mode,room,transport,game:g,busy:pending||Boolean(stoneDrop)||Boolean(aiTimer),team:n=>({name:n===1?'黑棋':'白棋',color:n===1?'black':'white'})});
 }
 function move(x, y) {
   if(game().phase==='scoring'){if(canScore()&&game().board[y*SIZE+x])goAction('dead',{x,y});return;}
@@ -321,29 +348,29 @@ function move(x, y) {
   if (game().board[y * SIZE + x]) { tentative = null; render(); return; }
   if (tentative?.[0] !== x || tentative?.[1] !== y) { tentative = [x,y]; render(); return; }
   tentative = null; hover = null;
-  if (mode === 'local') {
+  if (mode !== 'online') {
     try { playMove(localGame, localGame.turn, x, y); soundMove(); render(); } catch (error) { toast(error.message); }
   } else action(async () => { await api('move', { x, y }); });
 }
 function switchMode(next) {
   if (mode === next || pending) return;
-  const change = () => action(async () => { if (session) await leaveRoom(); resetReactions(); mode = next; render(); });
+  const change = () => action(async () => { if (session) await leaveRoom(); clearTimeout(aiTimer); aiTimer = null; resetReactions(); mode = next; localGame = newGame(); render(); });
   if (room) confirm('离开这间棋室？', '切换模式会关闭当前房间。进行中的对局将判对方获胜。', change, '离开并切换');
   else change();
 }
 
 
-function canScore(){return !pending&&game().status==='playing'&&game().phase==='scoring'&&(mode==='local'||transport&&room&&!room.closed&&!room.request&&bothOnline());}
-function renderGoControls(){const g=game(),local=mode==='local',seated=local||Boolean(room),scoring=g.phase==='scoring'&&g.status==='playing';
+function canScore(){return !pending&&game().status==='playing'&&game().phase==='scoring'&&(mode!=='online'||transport&&room&&!room.closed&&!room.request&&bothOnline());}
+function renderGoControls(){const g=game(),local=mode!=='online',ai=mode==='ai',seated=local||Boolean(room),scoring=g.phase==='scoring'&&g.status==='playing';
   $('go-controls').hidden=!seated;$('pass-button').hidden=g.status!=='playing'||g.phase!=='play';$('pass-button').disabled=!canPlay();
   $('go-captures').textContent=`黑提 ${g.captures[0]} · 白提 ${g.captures[1]} · 黑贴 3¾ 子`;
   $('score-panel').hidden=!scoring&&g.reason!=='score';
   if(g.score){const s=g.score;$('score-summary').textContent=`黑：${s.stones[0]} 子 + ${s.territory[0]} 空；白：${s.stones[1]} 子 + ${s.territory[1]} 空。公气 ${s.neutral} 点平分；黑贴 3¾ 子，${scoring?'暂计':'结算'}${s.winner===1?'黑':'白'}胜 ${s.margin} 子。`;}
   $('score-instruction').hidden=!scoring;$('resume-button').hidden=!scoring;$('resume-button').disabled=!canScore();
-  for(const color of [1,2]){const b=$('score-confirm-'+color);b.hidden=!scoring||!local&&color!==myColor();b.disabled=!canScore()||g.confirmed.includes(color);b.textContent=g.confirmed.includes(color)?(color===1?'黑方':'白方')+'已确认':(color===1?'黑方':'白方')+'确认结算';}
+  for(const color of [1,2]){const b=$('score-confirm-'+color);b.hidden=!scoring||!local||(ai&&color!==1);b.disabled=!canScore()||g.confirmed.includes(color);b.textContent=g.confirmed.includes(color)?(color===1?'黑方':'白方')+'已确认':(color===1?'黑方':'白方')+'确认结算';}
   $('score-state').textContent=g.confirmed.length===1?(g.confirmed[0]===1?'黑方':'白方')+'已确认，等待另一方。修改死子会清除双方确认。':'';
 }
-function goAction(type,data={}){action(async()=>{if(mode==='local'){const color=data.color||localGame.turn;({pass,dead:toggleDead,'confirm-score':confirmScore,resume})[type](localGame,color,data.x,data.y);}else await api(type,data);});}
+function goAction(type,data={}){action(async()=>{if(mode!=='online'){const color=data.color||localGame.turn;({pass,dead:toggleDead,'confirm-score':confirmScore,resume})[type](localGame,color,data.x,data.y);}else await api(type,data);});}
 $('pass-button').onclick=()=>confirm('停一手？','放弃这一手，轮到对方。双方连续停一手后进入死子确认和数子阶段。',()=>goAction('pass'),'确认停一手');
 $('resume-button').onclick=()=>goAction('resume');
 for(const color of [1,2])$('score-confirm-'+color).onclick=()=>{const version=room?.version;confirm('确认死活与结算？','请先标出所有死子、填完单官。确认的是当前棋盘；对手改变死子后需要重新确认。',()=>goAction('confirm-score',{color,version}),'确认结算');};
@@ -353,6 +380,7 @@ $('join-form').addEventListener('submit', event => { event.preventDefault(); con
 $('room-input').addEventListener('input', () => { $('room-input').value = $('room-input').value.replace(/[^a-zA-Z2-9]/g, '').toUpperCase(); });
 $('online-tab').addEventListener('click', () => switchMode('online'));
 $('local-tab').addEventListener('click', () => switchMode('local'));
+$('ai-tab').addEventListener('click', () => switchMode('ai'));
 $('undo-button').addEventListener('click', () => requestAction('undo'));
 $('draw-button').addEventListener('click', () => requestAction('draw'));
 $('request-accept').addEventListener('click', () => respondToRequest(true));
@@ -375,12 +403,12 @@ $('copy-button').addEventListener('click', async () => {
     catch { $('share-note').textContent = '选中下方链接，复制给朋友。'; $('share-url').value = invite; showBoardDialog($('share-dialog')); $('share-url').select(); }
   }
 });
-$('resign-button').addEventListener('click', () => confirm('这一局，先认输？', '确认后本局结束，对方获胜。', () => action(async () => { if (mode === 'local') resign(localGame, localGame.turn); else await api('resign'); }), '确认认输'));
+$('resign-button').addEventListener('click', () => confirm('这一局，先认输？', '确认后本局结束，对方获胜。', () => action(async () => { if (mode !== 'online') resign(localGame, localGame.turn); else await api('resign'); }), '确认认输'));
 $('leave-button').addEventListener('click', () => {
-  if (mode === 'local') confirm('重新开始这一局？', '棋盘将清空，由黑棋先行。', () => { localGame = newGame(); render(); }, '重新开局');
+  if (mode !== 'online') confirm('重新开始这一局？', '棋盘将清空，由黑棋先行。', () => { clearTimeout(aiTimer); aiTimer = null; localGame = newGame(); render(); }, '重新开局');
   else confirm('离开这间棋室？', room.game.status === 'playing' && room.players[1] ? '进行中的对局将判对方获胜，房间会关闭。' : '离开后房间将关闭，可以重新创建棋室。', () => action(leaveRoom), '离开房间');
 });
-$('rematch-button').addEventListener('click', () => action(async () => { if (mode === 'local') localGame = newGame(); else await api('rematch'); }));
+ $('rematch-button').addEventListener('click', () => action(async () => { if (mode !== 'online') { clearTimeout(aiTimer); aiTimer = null; localGame = newGame(); } else await api('rematch'); }));
 
 setupTabletop('gomoku'); document.body.classList.add('go'); setupBoard();
 $('game-actions').prepend($('go-controls'));
