@@ -31,6 +31,7 @@ export function createRoomUI({kind,send,refresh,playLocal}) {
     const nextScope=local ? game : room?.code||'lobby';
     if(scope!==nextScope) {scope=nextScope;localAuto.clear();cancel();lastMessages='';el('chat-input').value='';el('chat-status').textContent='';}
     for(const seat of game.finishOrder||[]) localAuto.delete(seat);
+    if(kind==='go' && game.phase==='scoring')localAuto.clear();
     const players=local ? Array.from({length:game.count||2},(_,i)=>({seat:i+1,name:team(i+1).name,id:'',auto:localAuto.has(i+1)})) : (room?.players||[]).filter(Boolean);
     const mine=players.find(p=>(p.seat||p.color)===(room?.yourSeat||room?.yourColor));
     el('chat-identity').textContent=local ? '同屏对弈 · 联机后可聊天' : mine ? `我的昵称：${mine.name}` : '加入棋室后，与朋友聊天';
@@ -65,7 +66,7 @@ export function createRoomUI({kind,send,refresh,playLocal}) {
       button.className='auto-button team-'+team(seat).color;button.setAttribute('aria-pressed',String(active));
       button.textContent=local ? `${team(seat).name} · ${active?'取消托管':'托管'}` : active?'取消托管':'开启托管';
       if(rank) button.textContent=kind==='oldmaid'?'已安全 · 观战中':`${team(seat).name} · 第 ${rank} 名`;
-      button.disabled=Boolean(rank) || changing || game.status==='finished' || (!local && (!transport||room.closed));
+      button.disabled=Boolean(rank) || changing || game.status==='finished' || (kind==='go'&&game.phase==='scoring') || (!local && (!transport||room.closed));
       button.addEventListener('click',async()=>{
         if(local) {active?localAuto.delete(seat):localAuto.add(seat);cancel();refresh();return;}
         changing=true;sync(state);

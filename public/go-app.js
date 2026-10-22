@@ -1,0 +1,396 @@
+import { SIZE, newGame, playMove, resign, undoMove, agreeDraw, pass, toggleDead, confirmScore, resume } from './go-rules.js';
+import { profileReady, profileHeaders, refreshRankings } from './profile.js';
+import { setupTabletop, showBoardDialog, syncTabletop } from './tabletop-ui.js';
+import { createRoomUI } from './chat-ui.js';
+
+const $ = id => document.getElementById(id);
+const svgNS = 'http://www.w3.org/2000/svg';
+let mode = 'online', room = null, session = null, localGame = newGame(), stream = null;
+let transport = false, pending = false, sound = false, audioContext, toastTimer, hover = null;
+let lastMoveCount = 0, confirmAction = null;
+let renderedStoneKey = '', lastRankedGame = '';
+let tentative = null, boardSnapshot = null, stoneDrop = null, stoneDropTimer;
+let roomUI;
+let lastNoticeId = null, nextReactionAt = 0, reactionTimer, feedbackTimer;
+const reactions = { poop: { emoji: '💩', label: '扔了一个大便', impact: '💩' }, heart: { emoji: '❤️', label: '送来一颗爱心', impact: '💕' }, bomb: { emoji: '💣', label: '扔了一颗炸弹', impact: '💥' }, cry:{emoji:'😭',label:'发来哭哭脸',impact:'😭'} };
+const cells = [], labels = 'ABCDEFGHJKLMNOPQRST', STEP=560/(SIZE-1), R=STEP*.415;
+const game = () => mode === 'local' ? localGame : room?.game || newGame();
+const myColor = () => mode === 'local' ? localGame.turn : room?.yourColor;
+const bothOnline = () => room?.players.every(p => (p?.connected||p?.auto) && !p.gone);
+const autoPlaying = () => mode==='local' ? roomUI?.isAuto(localGame.turn,localGame) : room?.players.find(p=>p?.color===myColor())?.auto;
+const canPlay = () => !pending && !stoneDrop && !autoPlaying() && game().status === 'playing' && game().phase==='play' && (mode === 'local' || (transport && room && !room.closed && !room.request && bothOnline() && game().turn === myColor()));
+
+function element(tag, attrs = {}, text = '') {
+  const el = document.createElementNS(svgNS, tag);
+  for (const [key, value] of Object.entries(attrs)) el.setAttribute(key, value);
+  if (text) el.textContent = text;
+  return el;
+}
+function toast(message) {
+  $('toast').textContent = message; $('toast').hidden = false;
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => $('toast').hidden = true, 4200);
+}
+function persist() {
+  try { if (session) sessionStorage.setItem('yiju-go-session', JSON.stringify(session)); else sessionStorage.removeItem('yiju-go-session'); } catch { /* The live game still works when storage is unavailable. */ }
+}
+function confirm(title, description, action, label = '确定') {
+  $('confirm-title').textContent = title; $('confirm-description').textContent = description;
+  $('confirm-ok').textContent = label; confirmAction = action; showBoardDialog($('confirm-dialog'));
+}
+function soundMove() {
+  if (!sound) return;
+  try {
+    audioContext ||= new (window.AudioContext || window.webkitAudioContext)();
+    const osc = audioContext.createOscillator(), gain = audioContext.createGain();
+    osc.connect(gain); gain.connect(audioContext.destination); osc.type = 'sine';
+    const t = audioContext.currentTime; osc.frequency.setValueAtTime(560, t); osc.frequency.exponentialRampToValueAtTime(190, t + .07);
+    gain.gain.setValueAtTime(.12, t); gain.gain.exponentialRampToValueAtTime(.001, t + .12); osc.start(t); osc.stop(t + .13);
+  } catch { /* Audio is optional. */ }
+}
+async function api(action, data = {}) {
+  const response = await fetch(`/api/go/${action}`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...profileHeaders(), ...(session ? { Authorization: `Bearer ${session.token}` } : {}) }, body: JSON.stringify({ room: session?.room, version:room?.version, ...data }), signal: AbortSignal.timeout(10000) });
+  const value = await response.json();
+  if (!response.ok) { const error = new Error(value.error || '操作失败，请重试'); error.status = response.status; throw error; }
+  if(value.game)applyRoom(value);
+  return value;
+}
+function friendly(error) { return error.name === 'TimeoutError' || error.name === 'TypeError' ? '暂时连接不上服务器，请检查网络后重试。' : error.message; }
+async function action(fn) {
+  if (pending) return;
+  pending = true; render();
+  try { await fn(); } catch (error) { toast(friendly(error)); if(session){try{await api('sync');}catch{}} }
+  finally { pending = false; render(); }
+}
+function applyRoom(next, silent = false) {
+  if(next.game?.kind!=='go'||room?.code===next.code&&next.seq<room.seq)return;
+  if (!silent && next.game.moves.length > lastMoveCount) soundMove();
+  if (!silent && next.notice && next.notice.id !== lastNoticeId) toast(next.notice.text);
+  lastNoticeId = next.notice?.id || null;
+  lastMoveCount = next.game.moves.length; room = next; render();
+  if (next.game.status === 'finished' && lastRankedGame !== `${next.code}-${next.round}`) { lastRankedGame = `${next.code}-${next.round}`; refreshRankings(); }
+}
+function connect() {
+  stream?.close(); transport = false;
+  const activeSession = session;
+  stream = new EventSource(`/api/go/events?room=${encodeURIComponent(session.room)}&token=${encodeURIComponent(session.token)}`);
+  stream.onmessage = event => { if (session !== activeSession) return; transport = true; applyRoom(JSON.parse(event.data)); };
+  stream.addEventListener('reaction', event => { if (session === activeSession && mode === 'online') showReaction(JSON.parse(event.data)); });
+  stream.onerror = async () => {
+    if (session !== activeSession) return;
+    transport = false; render();
+    try { await api('sync'); } catch (error) {
+      if (session !== activeSession) return;
+      if (error.status === 401 || error.status === 404) { clearRoom(); render(); toast('房间已失效，请创建或加入新房间。'); }
+    }
+  };
+}
+function enter(value) {
+  session = { room: value.code, token: value.token }; persist();
+  applyRoom(value, true); history.replaceState(null, '', `/go?room=${value.code}`); connect(); render();
+}
+function clearRoom() {
+  stream?.close(); stream = null; session = null; room = null; transport = false; lastMoveCount = 0;
+  lastNoticeId = null; resetReactions();
+  persist(); history.replaceState(null, '', '/go');
+}
+
+function resetReactions() {
+  clearTimeout(reactionTimer); clearTimeout(feedbackTimer); nextReactionAt = 0;
+  $('reaction-stage').replaceChildren(); $('reaction-feedback').textContent = '小小互动，不影响棋局';
+}
+function showReaction(reaction) {
+  const effect = reactions[reaction.kind];
+  if (!effect || ![1, 2].includes(reaction.from)) return;
+  const stage = $('reaction-stage');
+  const batch = document.createElement('div');
+  batch.className = `reaction-batch from-${reaction.from === 1 ? 'black' : 'white'} kind-${reaction.kind}`;
+  const flight = document.createElement('span'); flight.className = 'reaction-flight'; flight.textContent = effect.emoji;
+  const impact = document.createElement('span'); impact.className = 'reaction-impact'; impact.textContent = effect.impact;
+  const caption = document.createElement('span'); caption.className = 'reaction-caption';
+  caption.textContent = `${reaction.from === 1 ? '黑棋 → 白棋' : '白棋 → 黑棋'} ${effect.emoji}`;
+  batch.append(flight, impact, caption); stage.append(batch);
+  while (stage.children.length > 4) stage.firstElementChild.remove();
+  setTimeout(() => batch.remove(), 2200);
+  const sender = mode === 'local' ? reaction.from === 1 ? '黑棋' : '白棋' : reaction.from === myColor() ? '你' : '对手';
+  $('reaction-feedback').textContent = `${sender}${effect.label} ${effect.emoji}`;
+  clearTimeout(feedbackTimer);
+  feedbackTimer = setTimeout(() => { $('reaction-feedback').textContent = '小小互动，不影响棋局'; }, 6000);
+}
+function requestAction(kind) {
+  if (mode === 'local') {
+    if (kind === 'undo') confirm('双方同意悔棋？', '撤回最近一手，由刚才行棋的一方重新落子。', () => { undoMove(localGame, localGame.moves.findLast(m=>!m.resume).color); render(); }, '同意悔棋');
+    else confirm('双方同意和棋？', '确认后本局以和棋结束，可以再来一局。', () => { agreeDraw(localGame); render(); }, '同意和棋');
+  } else action(async () => { await api('request', { kind }); });
+}
+function respondToRequest(accept) {
+  const request = room?.request;
+  if (request) action(async () => { await api('respond', { id: request.id, accept }); });
+}
+function sendReaction(kind) {
+  if (pending || Date.now() < nextReactionAt) return;
+  action(async () => {
+    if (mode === 'local') showReaction({ kind, from: localGame.turn });
+    else await api('reaction', { kind });
+    nextReactionAt = Date.now() + 2000;
+    clearTimeout(reactionTimer); reactionTimer = setTimeout(render, 2050);
+  });
+}
+async function leaveRoom() {
+  if (session) await api('leave');
+  clearRoom(); render();
+}
+
+function setupBoard() {
+  const board = $('board');
+  const defs = element('defs');
+  for (const [id, light, dark] of [['black-stone', '#626960', '#171e19'], ['white-stone', '#ffffff', '#d9dacb']]) {
+    const gradient = element('radialGradient', { id, cx: '32%', cy: '25%', r: '75%' });
+    gradient.append(element('stop', { offset: '0%', 'stop-color': light }), element('stop', { offset: '100%', 'stop-color': dark })); defs.append(gradient);
+  }
+  const filter = element('filter', { id: 'stone-shadow', x: '-50%', y: '-50%', width: '200%', height: '220%', 'color-interpolation-filters': 'sRGB' });
+  filter.append(element('feDropShadow', { dx: '1', dy: '4', stdDeviation: '1.8', 'flood-color': '#3d301c', 'flood-opacity': '.38' })); defs.append(filter); board.append(defs);
+  for (let n = 0; n < SIZE; n++) {
+    const pos = 40 + n * STEP;
+    board.append(element('line', { x1: 40, y1: pos, x2: 600, y2: pos, class: n === 0 || n === SIZE-1 ? 'grid-edge' : 'grid-line' }), element('line', { x1: pos, y1: 40, x2: pos, y2: 600, class: n === 0 || n === SIZE-1 ? 'grid-edge' : 'grid-line' }));
+    board.append(element('text', { x: pos, y: 22, 'text-anchor': 'middle', class: 'board-coordinate' }, labels[n]), element('text', { x: 19, y: pos + 3, 'text-anchor': 'middle', class: 'board-coordinate' }, String(SIZE - n)));
+  }
+  for (const [x, y] of [3,9,15].flatMap(x=>[3,9,15].map(y=>[x,y]))) board.append(element('circle', { cx: 40 + x * STEP, cy: 40 + y * STEP, r: 3.1, class: 'star-point' }));
+  board.append(element('g', { id: 'stones' }), element('g', { id: 'hover' }));
+  for (let y = 0; y < SIZE; y++) for (let x = 0; x < SIZE; x++) {
+    const cell = element('circle', { cx: 40 + x * STEP, cy: 40 + y * STEP, r: STEP*.49, class: 'intersection', role: 'button', tabindex: x === 9 && y === 9 ? '0' : '-1', 'aria-label': `${labels[x]}${SIZE - y}，空位` });
+    cell.addEventListener('click', () => move(x, y));
+    cell.addEventListener('pointerenter', event => { if (event.pointerType !== 'touch') { hover = [x, y]; renderHover(); } });
+    cell.addEventListener('focus', () => {
+      for (const c of cells) c.setAttribute('tabindex', c === cell ? '0' : '-1');
+      hover = [x, y]; renderHover();
+    });
+    cell.addEventListener('keydown', event => {
+      let [nx, ny] = [x, y];
+      if (event.key === 'ArrowLeft') nx--; else if (event.key === 'ArrowRight') nx++;
+      else if (event.key === 'ArrowUp') ny--; else if (event.key === 'ArrowDown') ny++;
+      else if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); if (!event.repeat) move(x, y); return; }
+      else if (event.key === 'Escape') { tentative = null; render(); return; } else return;
+      event.preventDefault(); nx = Math.max(0, Math.min(SIZE-1, nx)); ny = Math.max(0, Math.min(SIZE-1, ny));
+      cell.setAttribute('tabindex', '-1'); cells[ny * SIZE + nx].setAttribute('tabindex', '0'); cells[ny * SIZE + nx].focus();
+    });
+    cells.push(cell); board.append(cell);
+  }
+  board.addEventListener('pointerleave', () => { hover = null; renderHover(); });
+}
+function renderHover() {
+  $('hover').replaceChildren();
+  if ((!tentative && !hover) || !canPlay()) return;
+  const [x, y] = tentative || hover;
+  if (game().board[y * SIZE + x]) return;
+  $('hover').append(element('circle', { cx: 40 + x * STEP, cy: 40 + y * STEP, r: R, fill: game().turn === 1 ? 'url(#black-stone)' : 'url(#white-stone)', stroke: '#8e9b82', class: tentative ? 'tentative-stone' : 'hover-stone' }));
+  if (tentative) $('hover').append(element('circle', { cx:40+x*STEP,cy:40+y*STEP,r:STEP*.48,class:'tentative-ring' }));
+}
+function syncBoardInteraction() {
+  const g = game(), scope = mode === 'local' ? localGame : room ? room.code + ':' + room.round : 'lobby';
+  const signature = JSON.stringify([g.board, g.turn, g.status]);
+  const before = boardSnapshot;
+  boardSnapshot = { scope, signature, count:g.moves.length };
+  if (!before || before.scope !== scope || before.signature !== signature) {
+    tentative = null; hover = null;
+    clearTimeout(stoneDropTimer); stoneDrop = null;
+    if (!before || before.scope !== scope) renderedStoneKey = '';
+    if (before?.scope === scope && g.moves.length === before.count + 1 && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      stoneDrop = g.moves.at(-1)?.pass || g.moves.at(-1)?.resume ? null : g.moves.at(-1);
+      stoneDropTimer = setTimeout(() => { stoneDrop = null; render(); }, 520);
+    }
+  }
+  if (!canPlay()) tentative = null;
+}
+function renderBoard() {
+  const g = game(), stones = $('stones');
+  const stoneKey = JSON.stringify([g.board, g.line, g.moves.at(-1),g.dead,g.phase,g.status]);
+  const redraw = stoneKey !== renderedStoneKey;
+  if (redraw) { stones.replaceChildren(); renderedStoneKey = stoneKey; }
+  const last = g.moves.at(-1)?.pass || g.moves.at(-1)?.resume ? null : g.moves.at(-1);
+  const pulseLine = [...g.line].sort((a, b) => Math.max(Math.abs(a[0] - last.x), Math.abs(a[1] - last.y)) - Math.max(Math.abs(b[0] - last.x), Math.abs(b[1] - last.y)));
+  g.board.forEach((color, index) => {
+    const x = index % SIZE, y = Math.floor(index / SIZE);
+    const chosen = tentative?.[0] === x && tentative?.[1] === y;
+    cells[index].setAttribute('aria-label', `${labels[x]}${SIZE - y}，${color ? color === 1 ? '黑棋' : '白棋' : chosen ? '已预选，再点一次落子' : '空位'}`);
+    cells[index].setAttribute('aria-pressed', String(chosen));
+    cells[index].setAttribute('aria-disabled', String(g.phase==='scoring'?(!color||!canScore()):(Boolean(color)||!canPlay())));
+    if (color && redraw) {
+      const order = pulseLine.findIndex(p => p[0] === x && p[1] === y);
+      const stone = element('circle', { cx: 40 + x * STEP, cy: 40 + y * STEP, r: R, fill: `url(#${color === 1 ? 'black' : 'white'}-stone)`, stroke: color === 2 ? '#d9ddcf' : '#252e26', 'stroke-width': '.7', class: `game-stone${order >= 0 ? ' winning-stone' : ''}`, ...(order >= 0 ? { 'data-pulse-order': order } : {}) });
+      if(g.dead.includes(index))stone.classList.add('dead-stone');
+      if (order >= 0 && stoneDrop) stone.style.setProperty('animation-delay', (520 + order*140)+'ms', 'important');
+      if (stoneDrop?.x === x && stoneDrop?.y === y) {
+        stones.append(element('ellipse', { cx:40+x*STEP,cy:44+y*STEP,rx:R,ry:R*.4,class:'stone-drop-shadow' }));
+        const falling = element('g', { class:'stone-drop', 'data-drop-coordinate':labels[x]+(SIZE-y) });
+        falling.append(stone, element('circle', { cx:40+x*STEP,cy:40+y*STEP,r:3,class:'last-point' })); stones.append(falling);
+      } else stones.append(stone);
+    }
+  });
+  if (redraw) for (const [x, y] of g.line) stones.append(element('circle', { cx: 40 + x * STEP, cy: 40 + y * STEP, r: 19.5, class: 'win-ring' }));
+  if (last && redraw && !stoneDrop) stones.append(element('circle', { cx: 40 + last.x * STEP, cy: 40 + last.y * STEP, r: 3, class: 'last-point' }));
+  if(redraw && g.score && (g.phase==='scoring'||g.reason==='score'))g.score.owners.forEach((owner,i)=>{if(owner)stones.append(element('rect',{x:40+(i%SIZE)*STEP-3,y:40+Math.floor(i/SIZE)*STEP-3,width:6,height:6,fill:owner===1?'#26352b':'#fffbea',stroke:'#80704d','stroke-width':.5,class:'territory-dot'}));});
+  $('board').classList.toggle('playable', canPlay()||canScore());
+  $('move-counter').replaceChildren(document.createTextNode('第 '), Object.assign(document.createElement('b'), { textContent: String(g.moves.length).padStart(2, '0') }), document.createTextNode(' 手'));
+  $('coordinate').textContent = g.moves.at(-1)?.pass ? '最近一手：停一手' : last ? `最近落子 ${labels[last.x]}${SIZE - last.y}` : '黑先 · 白后';
+  renderHover();
+}
+function render() {
+  syncBoardInteraction();
+  const local = mode === 'local', seated = local || Boolean(room), g = game();
+  $('online-tab').classList.toggle('selected', !local); $('local-tab').classList.toggle('selected', local);
+  $('online-tab').setAttribute('aria-pressed', String(!local)); $('local-tab').setAttribute('aria-pressed', String(local));
+  document.querySelector('.sidebar').classList.toggle('local-mode', local);
+  $('lobby').hidden = local || Boolean(room); $('room-panel').hidden = !room || local;
+  $('board-mode').textContent = local ? '同屏对弈' : room ? `棋室 ${room.code}` : '好友对弈';
+  $('mode-dot').classList.toggle('active', local || transport);
+  $('connection').textContent = local ? '同屏' : !room ? '未入座' : transport ? '已连接' : '重连中';
+  $('connection').classList.toggle('online', local || transport);
+  if (room) {
+    $('room-code').textContent = room.code; $('round-label').textContent = `第 ${room.round} 局`;
+    $('copy-button').disabled = room.closed;
+    $('invite-note').textContent = room.closed ? '棋室已关闭，离开后可以创建新房间。' : room.players[1] ? '两位棋手已入座，享受这一局。' : '把链接或房间码发给朋友，即可入座。';
+  }
+  let title = '棋盘已备好', detail = '邀请朋友，开始你们的第一步。', symbol = '○';
+  if (seated) {
+    if (g.status === 'finished') {
+      title = g.winner ? `${g.winner === 1 ? '黑棋' : '白棋'}获胜${!local && g.winner === myColor() ? ' · 好棋！' : ''}` : '和棋 · 旗鼓相当';
+      detail = g.reason === 'resign' ? `${g.winner === 1 ? '白棋' : '黑棋'}认输，本局结束。` : g.reason === 'leave' ? '一方离开了棋室，本局结束。' : g.reason === 'draw' ? '棋盘已满，不妨再来一局。' : '本局结束。';
+      if(g.reason==='score')detail=`${g.winner===1?'黑':'白'}胜 ${g.score.margin} 子 · 黑贴 3¾ 子`;
+      if (g.reason === 'agreement') detail = '双方同意和棋，握手言和。';
+      if (!local && g.reason === 'resign') detail = g.winner === myColor() ? '对手认输，本局结束。' : '你已认输，再来一局吧。';
+      if (!local && room.ready.length) detail = room.ready.includes(myColor()) ? '你已准备，等待对手再来一局。' : '对手想再来一局，轮到你确认了。';
+      symbol = g.winner ? '✳' : '＝';
+    } else if (!local && room.closed) { title = '棋室已关闭'; detail = '离开后可以创建新的房间。'; }
+    else if (!local && !transport) { title = '正在重新连接…'; detail = '棋局已保留，连接恢复后继续。'; }
+    else if (!local && !room.players[1]) { title = '等一位朋友入座'; detail = '分享邀请链接，朋友加入即可开局。'; }
+    else if (!local && !bothOnline()) { title = '对手暂时离线'; detail = '棋局已保留，等朋友回来再继续。'; }
+    else if (!local && room.request) {
+      title = room.request.from === myColor() ? '等待对手回应' : room.request.kind === 'undo' ? '对手申请悔棋' : '对手向你求和';
+      detail = '请求处理后继续，双方仍然不限时。'; symbol = '⇄';
+    }
+    else if(g.phase==='scoring'){title='终局数子 · 确认死活';detail='点棋子标记整块死子；双方确认后结算，有分歧可继续下。';symbol='◎';}
+    else {
+      title = local ? `轮到${g.turn === 1 ? '黑棋' : '白棋'}落子` : g.turn === myColor() ? '轮到你落子' : '等对手落子';
+      detail = canPlay() ? '点一下选位，再点同一处落子。' : '没有倒计时，慢慢想就好。'; symbol = g.turn === 1 ? '●' : '○';
+    }
+  }
+  if (tentative) { title = `已选 ${labels[tentative[0]]}${SIZE-tentative[1]}`; detail = '再点同一处落子，点其他位置可改选。'; }
+  if (stoneDrop) { title = '棋子落下中…'; detail = '落稳后继续行棋。'; }
+  else if (autoPlaying() && g.status==='playing') { detail='已开启托管，可随时取消。'; }
+  $('status-title').textContent = title; $('status-detail').textContent = detail; $('status-symbol').textContent = symbol;
+  $('board-turn').textContent = seated ? title : '';
+  for (const [color, key] of [[1, 'black'], [2, 'white']]) {
+    const p = room?.players.find(p => p?.color === color);
+    $(`${key}-name`).textContent = !local && p ? p.name+(color===myColor()?' · 你':'') : color===1?'先手':'后手';
+    $(`${key}-state`).textContent = (local ? roomUI?.isAuto(color,localGame) : p?.auto) ? '托管中' : local ? '已入座' : p?.gone ? '已离开' : p ? p.connected ? '已入座' : '暂时离线' : '等待入座';
+    $(`${key}-player`).classList.toggle('active', seated && g.status === 'playing' && g.turn === color && (local || (transport && bothOnline())));
+  }
+  $('game-actions').hidden = !seated;
+  const readyForAction = seated && !pending && !stoneDrop && (local || (transport && bothOnline() && !room.closed));
+  const request = local ? null : room?.request;
+  const ownRequest = request?.from === myColor();
+  $('negotiation-buttons').hidden = !seated || g.status !== 'playing' || g.phase!=='play' || Boolean(room?.closed);
+  $('undo-button').disabled = !readyForAction || Boolean(request) || !(local ? g.moves.length : g.moves.some(move => move.color === myColor()));
+  $('draw-button').disabled = !readyForAction || Boolean(request);
+  $('request-panel').hidden = !request;
+  if (request) {
+    const name = request.kind === 'undo' ? '悔棋' : '求和';
+    $('request-title').textContent = ownRequest ? `已发送${name}请求` : `对手申请${name}`;
+    $('request-detail').textContent = request.kind === 'undo' ? `同意后撤回${g.moves.at(-1)?.color === request.from ? '最近一手' : '双方最近各一手'}，由${request.from === 1 ? '黑棋' : '白棋'}重下。` : '同意后以和棋结束本局。';
+    $('request-accept').hidden = ownRequest; $('request-reject').hidden = ownRequest; $('request-cancel').hidden = !ownRequest;
+    $('request-accept').disabled = !readyForAction; $('request-reject').disabled = !readyForAction;
+    $('request-cancel').disabled = pending || !transport;
+  }
+  $('reactions-panel').hidden = !seated;
+  for (const button of document.querySelectorAll('[data-reaction]')) button.disabled = !readyForAction || Date.now() < nextReactionAt;
+  $('resign-button').disabled = pending || g.status !== 'playing' || (!local && (!transport || !bothOnline() || room.closed));
+  $('resign-button').hidden = g.status === 'finished' || Boolean(room?.closed);
+  $('leave-button').textContent = local ? '重新开局 ↻' : '离开房间 ↗'; $('leave-button').disabled = pending;
+  $('rematch-button').hidden = !seated || g.status !== 'finished' || Boolean(room?.closed);
+  $('rematch-button').disabled = pending || (!local && (!transport || !bothOnline() || room.ready.includes(myColor())));
+  $('rematch-button').textContent = !local && room?.ready.includes(myColor()) ? '等待对手确认…' : '再来一局 ↻';
+  $('create-button').disabled = pending; $('join-button').disabled = pending;
+  $('online-tab').disabled = pending; $('local-tab').disabled = pending;
+  renderGoControls();
+  renderBoard(); syncTabletop({ kind: 'gomoku', requestId: room?.request?.id });
+  roomUI?.sync({mode,room,transport,game:g,busy:pending||Boolean(stoneDrop),team:n=>({name:n===1?'黑棋':'白棋',color:n===1?'black':'white'})});
+}
+function move(x, y) {
+  if(game().phase==='scoring'){if(canScore()&&game().board[y*SIZE+x])goAction('dead',{x,y});return;}
+  if (!canPlay()) return;
+  if (game().board[y * SIZE + x]) { tentative = null; render(); return; }
+  if (tentative?.[0] !== x || tentative?.[1] !== y) { tentative = [x,y]; render(); return; }
+  tentative = null; hover = null;
+  if (mode === 'local') {
+    try { playMove(localGame, localGame.turn, x, y); soundMove(); render(); } catch (error) { toast(error.message); }
+  } else action(async () => { await api('move', { x, y }); });
+}
+function switchMode(next) {
+  if (mode === next || pending) return;
+  const change = () => action(async () => { if (session) await leaveRoom(); resetReactions(); mode = next; render(); });
+  if (room) confirm('离开这间棋室？', '切换模式会关闭当前房间。进行中的对局将判对方获胜。', change, '离开并切换');
+  else change();
+}
+
+
+function canScore(){return !pending&&game().status==='playing'&&game().phase==='scoring'&&(mode==='local'||transport&&room&&!room.closed&&!room.request&&bothOnline());}
+function renderGoControls(){const g=game(),local=mode==='local',seated=local||Boolean(room),scoring=g.phase==='scoring'&&g.status==='playing';
+  $('go-controls').hidden=!seated;$('pass-button').hidden=g.status!=='playing'||g.phase!=='play';$('pass-button').disabled=!canPlay();
+  $('go-captures').textContent=`黑提 ${g.captures[0]} · 白提 ${g.captures[1]} · 黑贴 3¾ 子`;
+  $('score-panel').hidden=!scoring&&g.reason!=='score';
+  if(g.score){const s=g.score;$('score-summary').textContent=`黑：${s.stones[0]} 子 + ${s.territory[0]} 空；白：${s.stones[1]} 子 + ${s.territory[1]} 空。公气 ${s.neutral} 点平分；黑贴 3¾ 子，${scoring?'暂计':'结算'}${s.winner===1?'黑':'白'}胜 ${s.margin} 子。`;}
+  $('score-instruction').hidden=!scoring;$('resume-button').hidden=!scoring;$('resume-button').disabled=!canScore();
+  for(const color of [1,2]){const b=$('score-confirm-'+color);b.hidden=!scoring||!local&&color!==myColor();b.disabled=!canScore()||g.confirmed.includes(color);b.textContent=g.confirmed.includes(color)?(color===1?'黑方':'白方')+'已确认':(color===1?'黑方':'白方')+'确认结算';}
+  $('score-state').textContent=g.confirmed.length===1?(g.confirmed[0]===1?'黑方':'白方')+'已确认，等待另一方。修改死子会清除双方确认。':'';
+}
+function goAction(type,data={}){action(async()=>{if(mode==='local'){const color=data.color||localGame.turn;({pass,dead:toggleDead,'confirm-score':confirmScore,resume})[type](localGame,color,data.x,data.y);}else await api(type,data);});}
+$('pass-button').onclick=()=>confirm('停一手？','放弃这一手，轮到对方。双方连续停一手后进入死子确认和数子阶段。',()=>goAction('pass'),'确认停一手');
+$('resume-button').onclick=()=>goAction('resume');
+for(const color of [1,2])$('score-confirm-'+color).onclick=()=>{const version=room?.version;confirm('确认死活与结算？','请先标出所有死子、填完单官。确认的是当前棋盘；对手改变死子后需要重新确认。',()=>goAction('confirm-score',{color,version}),'确认结算');};
+
+$('create-button').addEventListener('click', () => action(async () => { await profileReady; enter(await api('create')); }));
+$('join-form').addEventListener('submit', event => { event.preventDefault(); const code = $('room-input').value.trim().toUpperCase(); if (!/^[A-Z2-9]{6}$/.test(code)) return toast('请输入 6 位房间码。'); action(async () => { await profileReady; enter(await api('join', { room: code })); }); });
+$('room-input').addEventListener('input', () => { $('room-input').value = $('room-input').value.replace(/[^a-zA-Z2-9]/g, '').toUpperCase(); });
+$('online-tab').addEventListener('click', () => switchMode('online'));
+$('local-tab').addEventListener('click', () => switchMode('local'));
+$('undo-button').addEventListener('click', () => requestAction('undo'));
+$('draw-button').addEventListener('click', () => requestAction('draw'));
+$('request-accept').addEventListener('click', () => respondToRequest(true));
+$('request-reject').addEventListener('click', () => respondToRequest(false));
+$('request-cancel').addEventListener('click', () => { const request = room?.request; if (request) action(async () => { await api('cancel-request', { id: request.id }); }); });
+document.querySelectorAll('[data-reaction]').forEach(button => button.addEventListener('click', () => sendReaction(button.dataset.reaction)));
+$('rules-button').addEventListener('click', () => $('rules-dialog').showModal());
+$('hall-link').addEventListener('click', event => { if (room) { event.preventDefault(); confirm('离开棋室，返回大厅？', '当前房间会关闭，进行中的对局将判对方获胜。', () => action(async () => { await leaveRoom(); location.href = '/'; }), '返回大厅'); } });
+document.querySelectorAll('.dialog-close').forEach(button => button.addEventListener('click', () => button.closest('dialog').close()));
+$('confirm-cancel').addEventListener('click', () => $('confirm-dialog').close());
+$('confirm-ok').addEventListener('click', () => { $('confirm-dialog').close(); const fn = confirmAction; confirmAction = null; fn?.(); });
+$('sound-button').addEventListener('click', async () => { sound = !sound; $('sound-button').setAttribute('aria-pressed', String(sound)); $('sound-button').title = sound ? '关闭落子音效' : '开启落子音效'; $('sound-wave').setAttribute('d', sound ? 'M15 8c3 2 3 6 0 8m3-11c5 4 5 10 0 14' : 'm16 9 6 6m0-6-6 6'); if (sound) { soundMove(); await audioContext?.resume(); } });
+$('copy-button').addEventListener('click', async () => {
+  const invite = `${location.origin}/go?room=${room.code}`;
+  if (location.hostname === 'localhost' || location.hostname === '127.0.0.1' || !navigator.clipboard) {
+    $('share-note').textContent = location.hostname === 'localhost' || location.hostname === '127.0.0.1' ? '当前是本机地址。请先用启动窗口显示的局域网地址打开游戏，再把邀请链接发给同一 Wi-Fi 下的朋友。' : '长按或选中下方链接，复制给朋友。';
+    $('share-url').value = invite; showBoardDialog($('share-dialog')); $('share-url').select();
+  } else {
+    try { await navigator.clipboard.writeText(invite); toast('邀请链接已复制，发给朋友吧。'); }
+    catch { $('share-note').textContent = '选中下方链接，复制给朋友。'; $('share-url').value = invite; showBoardDialog($('share-dialog')); $('share-url').select(); }
+  }
+});
+$('resign-button').addEventListener('click', () => confirm('这一局，先认输？', '确认后本局结束，对方获胜。', () => action(async () => { if (mode === 'local') resign(localGame, localGame.turn); else await api('resign'); }), '确认认输'));
+$('leave-button').addEventListener('click', () => {
+  if (mode === 'local') confirm('重新开始这一局？', '棋盘将清空，由黑棋先行。', () => { localGame = newGame(); render(); }, '重新开局');
+  else confirm('离开这间棋室？', room.game.status === 'playing' && room.players[1] ? '进行中的对局将判对方获胜，房间会关闭。' : '离开后房间将关闭，可以重新创建棋室。', () => action(leaveRoom), '离开房间');
+});
+$('rematch-button').addEventListener('click', () => action(async () => { if (mode === 'local') localGame = newGame(); else await api('rematch'); }));
+
+setupTabletop('gomoku'); document.body.classList.add('go'); setupBoard();
+$('game-actions').prepend($('go-controls'));
+roomUI=createRoomUI({kind:'go',send:async (type,data)=>{const next=await api(type,data);if(type==='auto') applyRoom(next);},refresh:render,playLocal:m=>{if(m.action==='pass')pass(localGame,localGame.turn);else playMove(localGame,localGame.turn,m.x,m.y);soundMove();render();}});
+render(); await profileReady;
+try { const stored = JSON.parse(sessionStorage.getItem('yiju-go-session') || 'null'); if (stored?.room && stored?.token) session = stored; } catch { /* Start a fresh session. */ }
+const invitation = new URLSearchParams(location.search).get('room')?.toUpperCase();
+if (session) {
+  await action(async () => {
+    try { applyRoom(await api('sync'), true); connect(); if (invitation && invitation !== session.room) toast('已恢复你正在进行的棋局。离开后可加入其他房间。'); }
+    catch (error) { if (error.status === 401 || error.status === 404) clearRoom(); else connect(); throw error; }
+  });
+} else if (invitation && /^[A-Z2-9]{6}$/.test(invitation)) { $('room-input').value = invitation; toast('邀请已收到，点击箭头加入好友的棋室。'); }
