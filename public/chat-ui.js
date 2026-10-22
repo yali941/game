@@ -27,14 +27,15 @@ export function createRoomUI({kind,send,refresh,playLocal}) {
   function sync(next) {
     state=next;
     mobileUI.sync(next);
-    const {mode,room,transport,game,team,busy}=next,local=mode==='local';
+    const {mode,room,transport,game,team,busy,allowAuto=true,localLabel='同屏对弈'}=next,local=mode==='local';
+    if(!allowAuto){localAuto.clear();cancel();}
     const nextScope=local ? game : room?.code||'lobby';
     if(scope!==nextScope) {scope=nextScope;localAuto.clear();cancel();lastMessages='';el('chat-input').value='';el('chat-status').textContent='';}
     for(const seat of game.finishOrder||[]) localAuto.delete(seat);
     if(kind==='go' && game.phase==='scoring')localAuto.clear();
     const players=local ? Array.from({length:game.count||2},(_,i)=>({seat:i+1,name:team(i+1).name,id:'',auto:localAuto.has(i+1)})) : (room?.players||[]).filter(Boolean);
     const mine=players.find(p=>(p.seat||p.color)===(room?.yourSeat||room?.yourColor));
-    el('chat-identity').textContent=local ? '同屏对弈 · 联机后可聊天' : mine ? `我的昵称：${mine.name}` : '加入棋室后，与朋友聊天';
+    el('chat-identity').textContent=local ? localLabel+' · 联机后可聊天' : mine ? `我的昵称：${mine.name}` : '加入棋室后，与朋友聊天';
     el('chat-identity').title=mine ? `玩家 ID：${mine.id} · 与胜场榜共用昵称` : '';
     const playerNames=JSON.stringify(players.map(p=>[p.id,p.name]));
     if(!local && playerNames!==lastPlayers) {lastPlayers=playerNames;refreshRankings();}
@@ -59,8 +60,8 @@ export function createRoomUI({kind,send,refresh,playLocal}) {
     }
     const writable=!local && room && !room.closed && transport && !sending;
     el('chat-input').disabled=!writable;el('chat-send').disabled=!writable;
-    controls.replaceChildren();controls.hidden=!local && !room;
-    const seats=local ? players.map(p=>p.seat) : mine ? [mine.seat||mine.color] : [];
+    controls.replaceChildren();controls.hidden=!allowAuto || (!local && !room);
+    const seats=!allowAuto ? [] : local ? players.map(p=>p.seat) : mine ? [mine.seat||mine.color] : [];
     for(const seat of seats) {
       const button=document.createElement('button'),active=isAuto(seat),rank=(game.finishOrder||[]).indexOf(seat)+1;
       button.className='auto-button team-'+team(seat).color;button.setAttribute('aria-pressed',String(active));
@@ -74,7 +75,7 @@ export function createRoomUI({kind,send,refresh,playLocal}) {
         finally {changing=false;refresh();}
       });controls.append(button);
     }
-    if(local && game.status==='playing' && localAuto.has(game.turn) && !busy && !document.querySelector('dialog[open]')) {
+    if(allowAuto && local && game.status==='playing' && localAuto.has(game.turn) && !busy && !document.querySelector('dialog[open]')) {
       const key=[game.turn,game.moves.length,game.rolls||0].join(':');
       if(timer && taskKey===key) return;
       cancel();taskKey=key;const activeScope=scope;
