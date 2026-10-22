@@ -1,3 +1,4 @@
+import {chooseGoMove} from './go-rules.js';
 import { SIZE, winningLine } from './game.js';
 import { jungleTargets, denOwner, flightOptions } from './table-rules.js';
 import { chooseUnoMove } from './uno-rules.js';
@@ -5,6 +6,7 @@ import { chooseUnoMove } from './uno-rules.js';
 // Deterministic, legal moves for optional assistance. Rules still validate every move.
 export function chooseAutoMove(game) {
   if (game.status !== 'playing') return null;
+  if (game.kind === 'go') return chooseGoMove(game);
   if (game.kind === 'oldmaid') return {action:'draw'}; // Server chooses a random position without inspecting ranks.
   if (game.kind === 'uno') return chooseUnoMove(game);
   if (game.kind === 'flight') {
