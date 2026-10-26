@@ -20,3 +20,14 @@ test('face grids always contain nine visible stickers', () => {
   const cube = newCube(); scramble(cube, Math.random, 12);
   for (const face of ['U','R','F','D','L','B']) assert.equal(faceGrid(cube, face).length, 9);
 });
+test('turns only move existing stickers and preserve nine of every colour', () => {
+  const cube = newCube();
+  for (const move of [
+    ['F', 1], ['R', -1], ['U', 1], ['B', -1], ['D', 1], ['L', -1],
+    ['F', -1], ['R', 1], ['U', -1], ['B', 1], ['D', -1], ['L', 1],
+  ]) turn(cube, move[0], move[1]);
+  const counts = Object.fromEntries(['U', 'R', 'F', 'D', 'L', 'B'].map(color => [color, 0]));
+  for (const sticker of cube.stickers) counts[sticker.color]++;
+  assert.deepEqual(counts, { U: 9, R: 9, F: 9, D: 9, L: 9, B: 9 });
+  assert.equal(cube.stickers.length, 54);
+});
