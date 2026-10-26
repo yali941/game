@@ -29,13 +29,13 @@ export function createTableService({ roll = () => randomInt(1, 7), records, auto
   const waiting=(kind,count)=>kind==='oldmaid'?waitingOldMaid(count):waitingUno(count);
   const makeGame=(kind,count,first=1)=>kind==='oldmaid'?newOldMaid(count,randomInt,first):kind==='uno'?newUno(count,randomInt,first):newTableGame(kind,count);
   const connected = p => Boolean(p && !p.gone && p.streams.size);
-  const snapshot = (r, p) => ({ code: r.code, kind: r.kind, count: r.count, yourSeat: p.seat, host: 1, game: r.kind==='oldmaid'?oldMaidSnapshot(r.game,p.seat):r.kind==='uno'?unoSnapshot(r.game,p.seat):r.game, dicePolicy: dicePolicy(r), started: r.started, closed: r.closed, ready: r.ready, round: r.round, version: r.version, seq: r.seq, chat:r.chat||[], players: r.players.map(p => p ? { ...publicPlayer(p), seat: p.seat, connected: connected(p), gone: p.gone } : null) });
-  const availablePlayer=p=>Boolean(p && !p.gone && (connected(p)||p.auto));
+  const snapshot = (r, p) => ({ code: r.code, kind: r.kind, roomMode: r.roomMode || 'friends', count: r.count, yourSeat: p.seat, host: 1, game: r.kind==='oldmaid'?oldMaidSnapshot(r.game,p.seat):r.kind==='uno'?unoSnapshot(r.game,p.seat):r.game, dicePolicy: dicePolicy(r), started: r.started, closed: r.closed, ready: r.ready, round: r.round, version: r.version, seq: r.seq, chat:r.chat||[], players: r.players.map(p => p ? { ...publicPlayer(p), bot: Boolean(p.bot), seat: p.seat, connected: connected(p), gone: p.gone } : null) });
+  const availablePlayer=p=>Boolean(p && !p.gone && (connected(p)||p.auto||p.bot));
   const finishedSeat=(r,p)=>Boolean(p && r.game.finishOrder?.includes(p.seat));
   const readyPlayers=r=>r.players.every(p=>availablePlayer(p) || (r.game.status==='playing' && finishedSeat(r,p)));
   const broadcast = r => {
     for(const p of r.players) if(finishedSeat(r,p)) p.auto=false;
-    if (r.diceMode !== 'unlucky') records?.victory(r, r.kind, p => p.seat);
+    if (r.diceMode !== 'unlucky' && r.roomMode !== 'ai') records?.victory(r, r.kind, p => p.seat);
     r.updatedAt = Date.now(); r.seq++;
     for (const p of r.players) if (p) for (const s of p.streams) s.write(`data: ${JSON.stringify(snapshot(r, p))}\n\n`);
     auto.sync(r);
@@ -76,6 +76,8 @@ export function createTableService({ roll = () => randomInt(1, 7), records, auto
     if (action === 'create') {
       if (!['flight', 'jungle', 'uno', 'oldmaid'].includes(data.kind)) throw new Error('请选择有效的游戏');
       const diceMode = data.diceMode ?? 'fair';
+      const roomMode = data.roomMode ?? 'friends';
+      if (!['friends', 'ai'].includes(roomMode) || (roomMode === 'ai' && (data.kind !== 'flight' || diceMode !== 'fair'))) throw new Error('请选择有效的人机模式');
       if (!['fair', 'unlucky'].includes(diceMode) || (data.kind !== 'flight' && diceMode !== 'fair')) throw new Error('请选择有效的飞行棋模式');
       const count = cardGame(data.kind) ? 1 : data.kind === 'jungle' ? 2 : data.count ?? 2;
       if (!cardGame(data.kind) && ![2, 3, 4].includes(count)) throw new Error('请选择 2～4 人');
@@ -83,6 +85,7 @@ export function createTableService({ roll = () => randomInt(1, 7), records, auto
       let code; do { code = Array.from(randomBytes(6), b => alphabet[b % alphabet.length]).join(''); } while (rooms.has(code));
       const p = seat(1), r = { code, kind: data.kind, count, players: [p, ...Array(count - 1).fill(null)], game: cardGame(data.kind)?waiting(data.kind,count):makeGame(data.kind, count), started: false, closed: false, ready: [], round: 1, version: 0, seq: 0, updatedAt: Date.now() };
       r.diceMode = diceMode;
+      r.roomMode = roomMode;
       identifyPlayer(p,records?.lookup(req));
       rooms.set(code, r); return send(res, 200, { token: p.token, ...snapshot(r, p) });
     }
@@ -114,6 +117,19 @@ export function createTableService({ roll = () => randomInt(1, 7), records, auto
     if(action==='auto') {
       if(data.enabled && finishedSeat(r,p)) throw new Error('你已完成本局排名，可以观看其他玩家继续比赛');
       setAuto(p,data.enabled);broadcast(r);return send(res,200,snapshot(r,p));
+    }
+    // Fill only genuinely empty seats, after checking the host and all humans.
+    // A disconnected friend keeps their seat and is never replaced by a bot.
+    if (action === 'start' && r.roomMode === 'ai') {
+      if (p.seat !== 1 || r.started) throw new Error('请由房主开始新局');
+      if (!r.players.filter(Boolean).every(availablePlayer)) throw new Error('等待已入座的朋友连接后开始');
+      r.players = r.players.map((player, index) => {
+        if (player) return player;
+        const bot = seat(index + 1);
+        identifyPlayer(bot);
+        bot.bot = true; bot.auto = true; bot.name = `AI 飞行员 ${index + 1}`;
+        return bot;
+      });
     }
     if (!readyPlayers(r)) throw new Error('等待仍在比赛的棋手连接后继续');
     if (action === 'reaction') {
@@ -156,7 +172,7 @@ export function createTableService({ roll = () => randomInt(1, 7), records, auto
     } else if (action === 'rematch') {
       if (r.game.status !== 'finished') throw new Error('本局尚未结束');
       if (!r.ready.includes(p.seat)) r.ready.push(p.seat);
-      if (r.ready.length === r.count) { r.players.forEach(p=>p.auto=false);r.round++;r.game = makeGame(r.kind, r.count, (r.round-1)%r.count+1); r.ready = []; if(!cardGame(r.kind)) r.game.turn = (r.round - 1) % r.count + 1; }
+      if (r.players.every(player => player.bot || r.ready.includes(player.seat))) { r.players.forEach(p=>p.auto=Boolean(p.bot));r.round++;r.game = makeGame(r.kind, r.count, (r.round-1)%r.count+1); r.ready = []; if(!cardGame(r.kind)) r.game.turn = (r.round - 1) % r.count + 1; }
     } else return send(res, 404, { error: '未知操作' });
     r.version++; broadcast(r); return send(res, 200, snapshot(r, p));
   }
