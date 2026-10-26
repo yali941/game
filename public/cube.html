@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><meta name="theme-color" content="#edf1eb"><title>一局 · 魔方</title><link rel="icon" href="/favicon.svg"><link rel="stylesheet" href="/cube.css"><script type="module" src="/cube-app.js"></script></head>
+<body>
+  <header class="cube-header"><a class="cube-brand" href="/">● 一局<span>○</span><small>PLAY TOGETHER</small></a><a href="/">← 游戏大厅</a></header>
+  <main class="cube-main">
+    <section class="cube-intro"><p class="cube-overline">TURN. MATCH. CELEBRATE.</p><h1>把六面颜色拼回来<span>。</span></h1><p>传统三阶魔方 · 只转你选择的那一面 · 不限时</p></section>
+    <div class="cube-layout">
+      <section class="cube-stage" aria-label="三阶魔方">
+        <div class="cube-status"><span class="live-dot"></span><span id="stage-label">已随机打乱，轮到你</span><strong id="move-count">00 步</strong></div>
+        <div class="cube-view"><div id="cube-model" class="cube-model" aria-label="固定视角的三阶魔方"></div><div id="fireworks" aria-hidden="true"></div></div>
+        <div class="cube-caption"><span id="last-move">选择一面，再选择顺时针或逆时针。</span><span id="cube-state">未完成</span></div>
+      </section>
+      <aside class="cube-sidebar">
+        <section class="cube-panel"><p class="cube-overline">01 / 魔方操作</p><h2>你来转面。</h2><p class="cube-help">魔方视角固定，不会自己转。选择一个面，再点方向按钮；每次只转一层。</p><div id="face-controls" class="face-controls"></div></section>
+        <section class="cube-panel cube-actions"><p class="cube-overline">02 / 重新开始</p><button id="scramble-button" class="cube-primary">重新随机打乱 ↻</button><button id="reset-button" class="cube-secondary">恢复完整魔方</button><p id="scramble-note" class="cube-note"></p></section>
+        <section class="cube-panel cube-rules"><p class="cube-overline">03 / 小提示</p><ol><li>白色在上、绿色在前、红色在右，是标准配色。</li><li>每次转面都会有短暂的转动反馈，完成后六面同色。</li><li>礼花只在打乱后的魔方首次还原时出现。</li></ol></section>
+      </aside>
+    </div>
+  </main>
+  <footer class="cube-footer">一局 · 不赶时间，只管把颜色拼回来。</footer>
+</body>
+</html>
