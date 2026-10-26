@@ -30,29 +30,29 @@ export function newCube() {
 export function cloneCube(cube) {
   return { ...cube, stickers: cube.stickers.map(s => ({ position: [...s.position], normal: [...s.normal], color: s.color })), history: [...cube.history] };
 }
-function isLayer(sticker, face) {
-  const [axis, sign] = faceAxis(face);
-  const index = axis === 'x' ? 0 : axis === 'y' ? 1 : 2;
-  return sticker.position[index] === sign;
-}
 export function turn(cube, face, direction = 1, { record = true } = {}) {
   if (!FACES.includes(face) || ![1, -1].includes(direction)) throw new Error('无效的魔方面或方向');
   const [axis, sign] = faceAxis(face);
-  const turns = (direction === 1 ? -sign : sign) + 4;
-  for (const sticker of cube.stickers) if (isLayer(sticker, face)) {
+  turnLayer(cube, axis, sign, -sign * direction, { record: false });
+  if (record) cube.history.push({ face, direction });
+  return cube;
+}
+// Right-handed, Y-up quarter turns shared by rendering and puzzle state.
+export function turnLayer(cube, axis, index, direction, { record = true } = {}) {
+  if (!['x', 'y', 'z'].includes(axis) || ![-1, 0, 1].includes(index) || ![-1, 1].includes(direction)) throw new Error('无效的魔方层');
+  const coordinate = ['x', 'y', 'z'].indexOf(axis);
+  const turns = direction + 4;
+  for (const sticker of cube.stickers) if (sticker.position[coordinate] === index) {
     sticker.position = rotateVector(sticker.position, axis, turns);
     sticker.normal = rotateVector(sticker.normal, axis, turns);
   }
   cube.moves++;
   cube.solved = isSolved(cube);
-  if (record) cube.history.push({ face, direction });
+  if (record) cube.history.push({ axis, index, direction });
   return cube;
 }
 export function isSolved(cube) {
-  return cube.stickers.every(sticker => {
-    const face = FACES.find(key => same(normals[key], sticker.normal));
-    return sticker.color === face;
-  });
+  return FACES.every(face => new Set(cube.stickers.filter(s => same(normals[face], s.normal)).map(s => s.color)).size === 1);
 }
 export function faceGrid(cube, face) {
   const n = normals[face], grid = Array(9).fill(face);
@@ -88,4 +88,54 @@ export function scramble(cube, random = Math.random, length = 22) {
 }
 export function inverseSequence(sequence) {
   return [...sequence].reverse().map(move => ({ face: move.face, direction: -move.direction }));
+}
+
+// Geometry shared by direct manipulation and its regression tests.
+export const AXES = ['x', 'y', 'z'];
+export const NORMALS = { U: [0, 1, 0], R: [1, 0, 0], F: [0, 0, 1], D: [0, -1, 0], L: [-1, 0, 0], B: [0, 0, -1] };
+export function rotatePoint([x, y, z], axis, angle) {
+  const c = Math.cos(angle), s = Math.sin(angle);
+  if (axis === 'x') return [x, c * y - s * z, s * y + c * z];
+  if (axis === 'y') return [c * x + s * z, y, -s * x + c * z];
+  return [c * x - s * y, s * x + c * y, z];
+}
+const identity = [1, 0, 0, 0, 1, 0, 0, 0, 1];
+export const applyView = (p, m) => [0, 1, 2].map(r => p.reduce((sum, v, c) => sum + m[r * 3 + c] * v, 0));
+function rotateView(view, axis, angle) {
+  const columns = [0, 1, 2].map(c => rotatePoint([view[c], view[3 + c], view[6 + c]], axis, angle));
+  return [0, 1, 2].flatMap(r => columns.map(c => c[r]));
+}
+export const defaultView = () => rotateView(rotateView(identity, 'y', -36 * Math.PI / 180), 'x', -28 * Math.PI / 180);
+// Rotations are applied in screen space, even after turning the cube upside down.
+export const orbitView = (view, dx, dy) => rotateView(rotateView(view, 'y', dx * .007), 'x', -dy * .007);
+export const viewTransform = m => `matrix3d(${[m[0], m[3], m[6], 0, m[1], m[4], m[7], 0, m[2], m[5], m[8], 0, 0, 0, 0, 1].join(',')})`;
+// CSS has Y down. Reflecting Y reverses rotation about X and Z, but not Y.
+export const cssAngle = (axis, angle) => axis === 'y' ? angle : -angle;
+export const layerTransform = (axis, angle) => `rotate${axis.toUpperCase()}(${cssAngle(axis, angle)}rad)`;
+export function projectPoint(point, view, perspective = 850) {
+  const [x, y, z] = applyView([point[0], -point[1], point[2]], view);
+  const scale = perspective / (perspective - z);
+  return [x * scale, y * scale];
+}
+export function selectDragLayer(position, normal, point, delta, view, perspective = 850) {
+  const length = Math.hypot(...delta);
+  if (length < 8) return null;
+  let best = null;
+  for (let i = 0; i < 3; i++) {
+    // Slide a row/column along the touched surface, not spin the touched face.
+    if (normal[i]) continue;
+    const axis = AXES[i];
+    const plus = projectPoint(rotatePoint(point, axis, .001), view, perspective);
+    const minus = projectPoint(rotatePoint(point, axis, -.001), view, perspective);
+    const tangent = plus.map((v, j) => (v - minus[j]) / .002);
+    const speed = Math.hypot(...tangent);
+    if (speed < 1) continue;
+    const score = Math.abs(delta[0] * tangent[0] + delta[1] * tangent[1]) / (length * speed);
+    if (!best || score > best.score) best = { axis, index: position[i], tangent, score };
+  }
+  return best && best.score >= .55 ? best : null;
+}
+export function dragAngle(delta, tangent) {
+  const amount = (delta[0] * tangent[0] + delta[1] * tangent[1]) / (tangent[0] ** 2 + tangent[1] ** 2);
+  return Math.max(-Math.PI / 2, Math.min(Math.PI / 2, amount));
 }
