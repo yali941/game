@@ -16,7 +16,7 @@ let roomUI;
 let diceActor=1, diceActorSnapshot;
 const game = () => mode === 'local' ? localGame : room?.game || localGame;
 const seat = () => mode === 'local' ? game().turn : room?.yourSeat;
-const allOnline = () => room?.players.every(p => ((p?.connected||p?.auto) && !p.gone) || (room.game.status==='playing' && room.game.finishOrder?.includes(p?.seat)));
+const allOnline = () => room?.players.every(p => ((p?.connected||p?.auto||p?.bot) && !p.gone) || (room.game.status==='playing' && room.game.finishOrder?.includes(p?.seat)));
 const seated = () => mode === 'local' || Boolean(room);
 const available = () => !pending && !flightMotion && !jungleMotion && !isDiceRolling() && (mode === 'local' || (transport && room?.started && !room.closed && allOnline()));
 const autoPlaying = () => mode==='local' ? roomUI?.isAuto(localGame.turn,localGame) : room?.players.find(p=>p?.seat===seat())?.auto;
@@ -40,7 +40,7 @@ async function action(fn) {
 function apply(next) {
   if (room && room.code === next.code && next.seq < room.seq) return;
   if (room?.version !== next.version) selected = null;
-  room = next;
+  room = next; mode = room.roomMode === 'ai' ? 'ai' : 'online';
   const finished = `${room.code}-${room.round}`;
   if (room.game.status === 'finished' && lastRankedRound !== finished) { lastRankedRound = finished; refreshRankings(); }
   render();
@@ -59,7 +59,7 @@ function enter(value) { session = { room: value.code, token: value.token }; pers
 function clearRoom() { stream?.close(); stream = null; room = null; session = null; transport = false; selected = null; persist(); history.replaceState(null, '', `/play?game=${kind}`); $('table-effects').replaceChildren(); }
 function localDice() { const bytes = new Uint32Array(1); let value; do { crypto.getRandomValues(bytes); value = bytes[0]; } while (value >= 4294967292); return value % 6 + 1; }
 const rollOutcome = entry => (entry.luck === 'unlucky' ? '霉运加权 · ' : '') + (entry.outcome === 'penalty' ? '连续三个 6，返回机库' : entry.outcome === 'no-move' ? '无可移动飞机，换人' : '可移动飞机');
-const rollPlayer = n => `${playerName(n)}${mode === 'online' && room?.players[n - 1]?.name ? ` · ${room.players[n - 1].name}` : ''}`;
+const rollPlayer = n => `${playerName(n)}${mode !== 'local' && room?.players[n - 1]?.name ? ` · ${room.players[n - 1].name}` : ''}`;
 function renderRollHistory() {
   const g = game(), entries = g.rollHistory || [], list = $('roll-history-list');
   $('roll-history').hidden = !seated();
@@ -68,7 +68,7 @@ function renderRollHistory() {
   $('roll-history-note').textContent = entries.length ? `保留本局最近 ${entries.length} 次，最新在前。再来一局会清空，请及时复制。` : '本局尚未掷骰。';
   $('copy-roll-history').disabled = !entries.length;
   // Keep the scroll position while chat messages and animation callbacks render.
-  const key = JSON.stringify([entries, mode === 'online' ? room?.players.map(p => p?.name) : null, g.colors]);
+  const key = JSON.stringify([entries, mode !== 'local' ? room?.players.map(p => p?.name) : null, g.colors]);
   if (list.dataset.historyKey === key) return;
   list.dataset.historyKey = key; list.replaceChildren();
   for (const entry of [...entries].reverse()) {
@@ -81,8 +81,8 @@ function renderRollHistory() {
 }
 function rollHistoryText() {
   const g = game(), entries = g.rollHistory || [];
-  const lines = ['一局 · 飞行棋掷骰记录', mode === 'online' ? `房间 ${room.code} · 第 ${room.round} 局 · 联机` : '同屏对弈', `本局共 ${g.rolls} 次，以下为最近 ${entries.length} 次（按时间先后）`, ''];
-  if (mode === 'online' && room?.dicePolicy) lines.push(`芽卫兵倒霉模式：昵称「${room.dicePolicy.name}」；1～6 点概率依次为 ${room.dicePolicy.weights.join('%、')}%。`, '');
+  const lines = ['一局 · 飞行棋掷骰记录', mode !== 'local' ? `房间 ${room.code} · 第 ${room.round} 局 · 联机` : '同屏对弈', `本局共 ${g.rolls} 次，以下为最近 ${entries.length} 次（按时间先后）`, ''];
+  if (mode !== 'local' && room?.dicePolicy) lines.push(`芽卫兵倒霉模式：昵称「${room.dicePolicy.name}」；1～6 点概率依次为 ${room.dicePolicy.weights.join('%、')}%。`, '');
   for (let n = 1; n <= g.count; n++) {
     const own = entries.filter(entry => entry.player === n);
     lines.push(`${rollPlayer(n)}：${own.map(entry => entry.dice).join('、') || '尚无记录'}`);
@@ -404,19 +404,22 @@ function render() {
     if (!isDiceRolling()) syncFlightMotion();
   } else syncJungleMotion();
   const local = mode === 'local', g = game(), isSeated = seated(), count = g.count || 2;
-  $('online-tab').classList.toggle('selected', !local); $('local-tab').classList.toggle('selected', local); $('online-tab').setAttribute('aria-pressed', !local); $('local-tab').setAttribute('aria-pressed', local);
+  $('online-tab').classList.toggle('selected', mode === 'online'); $('local-tab').classList.toggle('selected', local); $('online-tab').setAttribute('aria-pressed', mode === 'online'); $('local-tab').setAttribute('aria-pressed', local);
+  $('ai-tab').hidden = kind !== 'flight'; $('ai-tab').classList.toggle('selected', mode === 'ai'); $('ai-tab').setAttribute('aria-pressed', mode === 'ai'); $('ai-tab').disabled = pending;
+  if (kind === 'flight') { $('dice-mode').closest('label').hidden = mode === 'ai'; $('dice-mode-help').hidden = mode === 'ai' || $('dice-mode').value !== 'unlucky'; }
+  $('create-button').textContent = mode === 'ai' ? '创建人机房间 ↗' : '创建房间 ↗';
   $('online-tab').disabled = pending; $('local-tab').disabled = pending;
   $('lobby').hidden = isSeated; $('room-panel').hidden = local || !room;
   $('connection').textContent = local ? '同屏' : !room ? '未入座' : transport ? '已连接' : '重连中';
-  if (room) { $('room-code').textContent = room.code; $('room-note').textContent = room.closed ? '棋室已关闭，离开后可重新创建。' : `${room.players.filter(Boolean).length} / ${room.count} 人已入座${!room.started ? '，人齐后由房主开始。' : '，享受这一局。'}`; }
-  $('board-label').textContent = local ? `${title} · 同屏对弈` : room ? `棋室 ${room.code}` : `${title} · 好友对弈`;
+  if (room) { $('room-code').textContent = room.code; $('room-note').textContent = room.closed ? '棋室已关闭，离开后可重新创建。' : `${room.players.filter(Boolean).length} / ${room.count} 人已入座${!room.started ? mode === 'ai' ? '，点击开始后 AI 补齐空位；可先邀请朋友。不计胜场。' : '，人齐后由房主开始。' : mode === 'ai' ? '，人机模式不计胜场。' : '，享受这一局。'}`; }
+  $('board-label').textContent = local ? `${title} · 同屏对弈` : room ? `棋室 ${room.code}${mode === 'ai' ? ' · 人机模式' : ''}` : `${title} · ${mode === 'ai' ? '人机模式' : '好友对弈'}`;
   $('round-label').textContent = room ? `第 ${room.round} 局` : local ? '同屏不计排名' : '行棋不限时';
   $('players').replaceChildren();
   for (let n = 1; n <= count; n++) {
     const player = document.createElement('div'); player.className = `table-player${isSeated && g.status === 'playing' && g.turn === n ? ' active' : ''}`;
     const token = document.createElement('span'); token.className = 'player-token'; token.style.backgroundColor = paint(n); token.textContent = kind === 'flight' ? '✈' : n === 1 ? '红' : '蓝';
-    const name = document.createElement('span'); name.textContent = `${playerName(n)}${!local && room?.yourSeat === n ? ' · 你' : ''}`;
-    const note = document.createElement('small'); note.textContent = (local ? roomUI?.isAuto(n,localGame) : room?.players[n-1]?.auto) ? '托管中' : local ? '已入座' : !room?.players[n - 1] ? '等待入座' : room.players[n - 1].gone ? '已离开' : room.players[n - 1].connected ? '已连接' : '暂时离线';
+    const name = document.createElement('span'); name.textContent = `${playerName(n)}${room?.players[n-1]?.bot ? ' · AI' : ''}${!local && room?.yourSeat === n ? ' · 你' : ''}`;
+    const note = document.createElement('small'); note.textContent = room?.players[n-1]?.bot ? '电脑玩家' : (local ? roomUI?.isAuto(n,localGame) : room?.players[n-1]?.auto) ? '托管中' : local ? '已入座' : !room?.players[n - 1] ? '等待入座' : room.players[n - 1].gone ? '已离开' : room.players[n - 1].connected ? '已连接' : '暂时离线';
     const rank=(g.finishOrder||[]).indexOf(n)+1;
     if(rank) note.textContent=`第 ${rank} 名${g.planes.filter(p=>p.owner===n).every(p=>p.progress===56)?' · 已归航':''}`;
     player.append(token, name, note); $('players').append(player);
@@ -426,7 +429,7 @@ function render() {
     if (g.status === 'finished') { status = g.winner ? `${playerName(g.winner)}获胜` : '本局结束'; detail = g.reason === 'home' ? '本局排名已确定，最后一名无需继续归航。' : g.reason === 'den' ? '成功进入对方兽穴。' : g.reason === 'blocked' ? '对方已没有合法走法。' : g.reason === 'resign' ? '一方认输，本局结束。' : '一位玩家离开，棋室已关闭。'; }
     else if (!local && room.closed) { status = '棋室已关闭'; detail = '离开后可以创建新的房间。'; }
     else if (!local && !transport) { status = '正在重新连接…'; detail = '棋局已保留，恢复连接后继续。'; }
-    else if (!local && !room.started) { status = allOnline() ? '棋手已齐，准备开始' : '等朋友们入座'; detail = room.yourSeat === 1 ? '分享邀请链接，人齐后点击开始。' : '请等待房主开始本局。'; }
+    else if (!local && !room.started) { status = mode === 'ai' ? '准备好了就开始' : allOnline() ? '棋手已齐，准备开始' : '等朋友们入座'; detail = room.yourSeat === 1 ? mode === 'ai' ? '可先邀请朋友；点击开始后，AI 自动补齐剩余空位。' : '分享邀请链接，人齐后点击开始。' : '请等待房主开始本局。'; }
     else if (!local && !allOnline()) { status = '有棋手暂时离线'; detail = '棋局已保留，等朋友回来再继续。'; }
     else { status = `轮到${local ? playerName(g.turn) : g.turn === seat() ? '你' : playerName(g.turn)}${kind === 'flight' ? g.phase === 'roll' ? '掷骰子' : '移动飞机' : '行棋'}`; detail = kind === 'flight' ? g.message : '先选己方动物，再点高亮格。不限时。'; }
   }
@@ -436,7 +439,8 @@ function render() {
   if(autoPlaying() && g.status==='playing' && !isDiceRolling() && !flightMotion && !jungleMotion) detail='已开启托管，可随时取消。';
   $('status-title').textContent = status; $('status-detail').textContent = detail; $('board-turn').textContent = isSeated ? status : '';
   $('board-help').textContent = kind === 'flight' ? '顺时针前进 · 飞机重叠时可用编号按钮选择。' : selected ? '选择高亮格行棋。' : '象 > 狮 > 虎 > 豹 > 狼 > 狗 > 猫 > 鼠';
-  $('start-button').hidden = local || !room || room.started || room.closed || room.yourSeat !== 1; $('start-button').disabled = pending || !allOnline();
+  $('start-button').hidden = local || !room || room.started || room.closed || room.yourSeat !== 1; $('start-button').disabled = pending || !transport || !(mode === 'ai' ? room?.players.filter(Boolean).every(p => !p.gone && (p.connected || p.auto)) : allOnline());
+  $('start-button').textContent = mode === 'ai' ? '开始游戏 · AI 补齐空位' : '人齐了，开始游戏';
   $('flight-controls').hidden = kind !== 'flight' || !isSeated || (!local && !room.started) || g.status === 'finished';
   if (kind === 'flight') {
     $('dice').setAttribute('aria-label', g.dice ? `骰子 ${g.dice} 点` : '尚未掷骰');
@@ -471,7 +475,7 @@ function render() {
       item.textContent=`第 ${i+1} 名 · ${playerName(seat)}`;placements.append(item);
     }
   }
-  roomUI?.sync({mode,room,transport,game:g,busy:pending||Boolean(flightMotion)||Boolean(jungleMotion)||isDiceRolling(),team:n=>({name:playerName(n),color:['red','yellow','blue','green'][colorOf(n)]})});
+  roomUI?.sync({mode: local ? 'local' : 'online',room,transport,game:g,busy:pending||Boolean(flightMotion)||Boolean(jungleMotion)||isDiceRolling(),team:n=>({name:playerName(n),color:['red','yellow','blue','green'][colorOf(n)]})});
 }
 
 document.title = `一局 · ${title}`; document.body.classList.add(kind); document.querySelector('[data-rank-kind]').dataset.rankKind = kind;
@@ -488,6 +492,7 @@ if (kind === 'flight') {
   $('dice-mode').onchange = () => { help.hidden = $('dice-mode').value !== 'unlucky'; };
 }
 const rules = kind === 'flight' ? [
+  '人机模式：可先邀请朋友入座，房主点击开始后 AI 补齐所选人数的空位。AI 与真人使用相同规则和公平骰子；人机局不计胜场，再来一局只需真人确认。',
   '2～4 人，每方 4 架飞机。红方先手，之后顺时针轮流。掷出 2、4、6 点，可选一架机库内的飞机出仓到起飞区，或让在途飞机按点数前进；2、4 点行动后换人。',
   '掷出 6，可选一架机库内的飞机放到起飞区，或让在途飞机前进 6 格；之后再掷一次。连续第三次掷出 6 时，本回合前两次动过的飞机返回机库，并结束回合。四架飞机全部归航后，轮到下一位尚未完成的玩家。',
   '飞机按骰点顺时针前进。落在自己的颜色格，向前跳 4 格一次；落在带同色飞机标记的飞跃起点，沿箭头飞跃。直接落在起点时，飞跃后再跳 4 格；先跳到起点则只飞跃。',
@@ -506,16 +511,17 @@ const ol = document.createElement('ol'); for (const text of rules) { const li = 
 const note = document.createElement('p'); note.textContent = '仍在比赛且未托管的玩家需保持在线；断线暂停、刷新原页面恢复。已归航玩家断线不影响其他人。行棋没有时间限制，可随时开启或取消托管。结束后全员确认再来一局，轮换先手。主动离开将关闭整间棋室；2 人对局判对方胜，3～4 人中途散局不计胜场。'; $('rules-content').append(note);
 $('rules-button').onclick = () => $('rules-dialog').showModal(); document.querySelectorAll('.dialog-close').forEach(b => b.onclick = () => b.closest('dialog').close());
 $('confirm-cancel').onclick = () => $('confirm-dialog').close(); $('confirm-ok').onclick = () => { $('confirm-dialog').close(); const fn = confirmAction; confirmAction = null; fn?.(); };
-$('create-button').onclick = () => action(async () => { await profileReady; enter(await api('create', { count: Number($('player-count').value), diceMode: kind === 'flight' ? $('dice-mode').value : 'fair' })); });
+$('create-button').onclick = () => action(async () => { await profileReady; enter(await api('create', { count: Number($('player-count').value), roomMode: mode === 'ai' ? 'ai' : 'friends', diceMode: kind === 'flight' && mode !== 'ai' ? $('dice-mode').value : 'fair' })); });
 $('join-form').onsubmit = e => { e.preventDefault(); action(async () => { await profileReady; enter(await api('join', { room: $('room-input').value.trim().toUpperCase() })); }); };
 $('room-input').oninput = () => $('room-input').value = $('room-input').value.replace(/[^a-zA-Z2-9]/g, '').toUpperCase();
 $('start-button').onclick = () => action(async () => apply(await api('start')));
 $('roll-button').onclick = () => action(async () => { if (mode === 'local') rollFlight(localGame, localGame.turn, localDice()); else apply(await api('roll')); });
 function switchMode(next) {
   if (next === mode) return;
-  const go = () => action(async () => { if (session) await api('leave'); clearRoom(); mode = next; localGame = newTableGame(kind, Number($('player-count').value)); });
+  const go = () => action(async () => { if (session) await api('leave'); clearRoom(); mode = next; if (next === 'ai') $('player-count').value = '4'; localGame = newTableGame(kind, Number($('player-count').value)); });
   if (room) confirm('离开棋室并切换？', '当前棋室会关闭，其他玩家也会结束本局。', go, '离开并切换'); else go();
 }
+$('ai-tab').onclick = () => switchMode('ai');
 $('online-tab').onclick = () => switchMode('online'); $('local-tab').onclick = () => switchMode('local');
 $('leave-button').onclick = () => confirm(mode === 'local' ? '重新开始这一局？' : '离开这间棋室？', mode === 'local' ? '棋盘会恢复到初始状态。' : '棋室将关闭。两人对局进行中离开判对方胜，多人散局不计胜场。', () => action(async () => { if (mode === 'local') { localGame = newTableGame(kind, localGame.count || 2); selected = null; } else { await api('leave'); clearRoom(); refreshRankings(); } }), mode === 'local' ? '重新开局' : '离开棋室');
 $('resign-button').onclick = () => confirm('这一局，先认输？', '确认后本局结束，对方获胜。', () => action(async () => { if (mode === 'local') { localGame.status = 'finished'; localGame.winner = 3 - localGame.turn; localGame.reason = 'resign'; } else apply(await api('resign')); }), '确认认输');
