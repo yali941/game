@@ -43,7 +43,7 @@ export function createRoomUI({kind,send,refresh,playLocal}) {
     for(const player of players) {
       const member=document.createElement('div'),name=document.createElement('strong'),id=document.createElement('small');
       member.className='chat-member team-'+team(player.seat||player.color).color;
-      name.textContent=`${team(player.seat||player.color).name} · ${player.name}${player.auto?' · 托管':''}`;
+      name.textContent=`${team(player.seat||player.color).name} · ${player.name}${player.bot?' · 电脑玩家':player.auto?' · 托管':''}`;
       member.title=player.id ? `玩家 ID：${player.id}` : '同屏玩家';member.append(name);el('chat-members').append(member);
     }
     const messages=local ? [] : room?.chat||[],key=JSON.stringify([scope===game?'local':scope,messages]);
