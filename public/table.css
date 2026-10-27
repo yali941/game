@@ -17,4 +17,4 @@ body.flight .table-board{background:#c8e8ef;border-color:#b6d8df}body.flight .ta
 
 .go-art{background-size:22px 22px}.go-art i{width:20px;height:20px;left:calc(50% - 10px);top:calc(50% - 10px)}.go-art i:nth-child(2){margin-left:-22px}.go-art i:nth-child(3){margin-left:0;margin-top:-22px}.go-art i:nth-child(4){margin-top:22px}.go-art i:nth-child(5){margin-left:22px;margin-top:0}
 
-.cube-art{height:170px;border-radius:9px;display:flex;align-items:center;justify-content:center;gap:2px;background:linear-gradient(145deg,#e7eee3,#d5e4d4);overflow:hidden}.cube-art i{font-style:normal;font-size:45px;filter:drop-shadow(0 8px 5px #53674a35);transform:rotate(-8deg)}.cube-art i:nth-child(2){transform:translateY(-18px) rotate(5deg)}.cube-art i:nth-child(3){transform:translateY(12px) rotate(11deg)}
+.cube-art{height:170px;border-radius:9px;display:flex;align-items:center;justify-content:center;gap:2px;background:linear-gradient(145deg,#e7eee3,#d5e4d4);overflow:hidden}.cube-art svg{display:block;height:160px;width:190px;max-width:100%;filter:drop-shadow(0 5px 4px #344b3020)}
