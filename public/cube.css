@@ -17,29 +17,44 @@
 .cube-primary:disabled,.cube-secondary:disabled{opacity:.55;cursor:default}
 @media(max-width:480px){.cube-model{--piece-size:46px;--piece-half:23px;--piece-step:48px;width:150px;height:150px}.piece-sticker{border-width:3px}.cube-caption{gap:8px;flex-wrap:wrap;padding-top:8px;padding-bottom:8px}}
 .cube-play-column{display:grid;gap:20px;min-width:0}
-.cube-guide{padding:24px}
-.cube-guide .guide-intro,.guide-notation-note{font-size:12px;line-height:1.85;color:#71816f}
-.cube-notation{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px;margin:18px 0 12px}
-.cube-notation div{padding:10px 4px;text-align:center;border:1px solid #dde5d8;border-radius:9px;background:#f0f5ec}
-.cube-notation dt{font:600 19px ui-monospace,monospace;color:#435e42}
-.cube-notation dd{margin:5px 0 0;font-size:11px;color:#7d8d78}
-.guide-notation-note code{color:#466040;white-space:nowrap}
-.cube-formula-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:20px}
-.cube-formula-grid article{padding:16px;border:1px solid #dce5d6;border-radius:12px;background:#fffef880}
-.cube-formula-grid h3{display:flex;align-items:center;gap:9px;margin:0 0 12px;font-size:14px;font-weight:500;color:#40563e}
-.cube-formula-grid h3 span{font:12px ui-monospace,monospace;color:#b18451}
-.cube-formula-grid p{font-size:12px;line-height:1.85;color:#71816c;margin:10px 0 0}
-.cube-formula-grid .formula-label{font-size:10px;margin:12px 0 6px;color:#8b987f}
-.cube-formula{display:block;padding:10px 12px;background:#e8efdf;border-radius:7px;color:#3e5c38;font:500 13px/1.9 ui-monospace,SFMono-Regular,Consolas,monospace;word-spacing:2px;overflow-wrap:anywhere}
-.cube-formula-grid .formula-tip{font-size:11px;color:#95815e}
-.formula-finish{grid-column:1/-1}
-.cube-formula-grid strong{font-weight:600;color:#516c48}
-.guide-sources{margin:18px 0 0;font-size:10px;line-height:1.9;color:#8d9c85}
-.guide-sources a{color:#6c8361;text-underline-offset:3px}
-@media(max-width:600px){.cube-guide{padding:18px 14px}.cube-formula-grid{grid-template-columns:1fr}.cube-notation{grid-template-columns:repeat(3,minmax(0,1fr))}.cube-play-column{gap:14px}}
-.cube-guide-figure{margin:0 0 14px;padding:10px 8px 8px;border-radius:10px;background:#edf2e8;border:1px solid #e0e7d9}
-.cube-guide-figure svg{display:block;width:100%;max-width:300px;height:auto;margin:auto;font-family:system-ui,sans-serif}
-.cube-guide-figure figcaption{text-align:center;font-size:10px;line-height:1.8;color:#8b896d;padding:3px 2px}
-.formula-finish .cube-guide-figure{float:left;width:45%;margin:0 18px 8px 0}
-.formula-finish:after{content:"";display:block;clear:both}
-@media(max-width:600px){.formula-finish .cube-guide-figure{float:none;width:auto;margin:0 0 14px}}
+.cube-stage{position:relative}
+.cube-orientation{position:absolute;top:60px;right:8px;width:112px;height:112px;z-index:5;user-select:none;touch-action:manipulation;cursor:default;border-radius:16px;background:radial-gradient(ellipse,#f9fbf2c9,transparent 72%)}
+.orientation-arrows{position:absolute;inset:0;width:112px;height:112px;pointer-events:none;filter:drop-shadow(0 2px 1px #23352220)}
+.orientation-home,.orientation-end{position:absolute;display:grid;place-items:center;width:28px;height:28px;padding:0;transform:translate(-50%,-50%);border:0;border-radius:50%;background:transparent;cursor:pointer;touch-action:manipulation}
+.orientation-home{left:56px;top:56px;z-index:20}
+.orientation-home svg{width:21px;height:21px;filter:drop-shadow(0 2px 2px #22391f40)}
+.orientation-end{color:var(--axis-color);font:700 11px/1 system-ui,sans-serif;text-shadow:0 1px 2px #fff,0 0 4px #fff}
+.orientation-end.is-rear{opacity:.55}
+.orientation-end[hidden]{display:none}
+.orientation-end[aria-pressed="true"]{background:#fffdf5d9;box-shadow:0 0 0 1px var(--axis-color)}
+.orientation-home:hover,.orientation-end:hover{background:#ffffffc9;opacity:1}
+.orientation-home:focus-visible,.orientation-end:focus-visible{outline:2px solid #516f4a;outline-offset:1px;background:#fffdf5}
+.cube-orientation button:disabled{cursor:default}
+@media(max-width:480px){.cube-orientation{right:2px;top:56px}}
+.cube-guide{padding:24px;min-width:0}
+.cube-guide .guide-intro{font-size:12px;line-height:1.85;color:#71816f}
+.cube-guide-nav{display:flex;flex-wrap:wrap;gap:8px;margin:18px 0 22px}
+.cube-guide-nav a{padding:8px 12px;border:1px solid #d8e3d2;border-radius:8px;background:#eef5e9;color:#4b6545;text-decoration:none;font-size:12px}
+.cube-guide-nav a:hover{background:#e1edda}
+.cube-guide-nav a:focus-visible,.cube-guide-page a:focus-visible{outline:3px solid #587b57;outline-offset:3px}
+.cube-guide-pages{display:grid;gap:22px}
+.cube-guide-page{margin:0;min-width:0;scroll-margin-top:20px}
+.cube-guide-page figcaption{margin:0 0 10px;font-size:14px;font-weight:500;color:#40563e}
+.cube-guide-page a{display:block;border:1px solid #dce5d6;border-radius:10px;overflow:hidden;background:white;cursor:zoom-in}
+.cube-guide-page img{display:block;width:100%;height:auto}
+@media(max-width:600px){.cube-guide{padding:18px 12px}.cube-guide-nav{gap:6px}.cube-guide-nav a{padding:8px 10px}.cube-play-column{gap:14px}}
+/* Play on the left, reference on the right; controls stay below the cube. */
+.cube-main,.cube-header{max-width:1440px}
+.cube-layout{grid-template-columns:minmax(0,1.05fr) minmax(0,.95fr);gap:22px}
+.cube-sidebar{grid-template-columns:minmax(0,1.25fr) minmax(0,1fr)}
+.cube-sidebar .cube-rules{grid-column:1/-1}
+.cube-guide{position:sticky;top:16px;height:672px;display:flex;flex-direction:column;overflow:hidden}
+.cube-guide .guide-intro{margin:0}
+.cube-guide-nav{margin:14px 0 18px;flex-shrink:0}
+.cube-guide-nav a[aria-current="step"]{background:#587b57;color:white;border-color:#587b57}
+.cube-guide-pages{position:relative;display:block;min-height:0;overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable;scrollbar-color:#b2c2a8 transparent;padding-right:8px;border-radius:8px}
+.cube-guide-page{margin:0 0 22px}
+.cube-guide-page:last-child{margin-bottom:0}
+.cube-guide-pages:focus-visible{outline:2px solid #587b57;outline-offset:3px}
+@media(max-width:980px){.cube-layout{grid-template-columns:1fr}.cube-view{min-height:430px}.cube-model{--piece-size:58px;--piece-half:29px;--piece-step:61px;width:190px;height:190px}.cube-guide{position:relative;top:auto;height:min(720px,85svh);min-height:420px}}
+@media(max-width:480px){.cube-sidebar{grid-template-columns:1fr}.cube-model{--piece-size:46px;--piece-half:23px;--piece-step:48px;width:150px;height:150px}.cube-guide-pages{padding-right:3px}}

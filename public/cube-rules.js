@@ -106,6 +106,12 @@ function rotateView(view, axis, angle) {
   return [0, 1, 2].flatMap(r => columns.map(c => c[r]));
 }
 export const defaultView = () => rotateView(rotateView(identity, 'y', -36 * Math.PI / 180), 'x', -28 * Math.PI / 180);
+// Look straight at a physical face; this changes the camera only.
+export function alignedView(face) {
+  const rotations = { F: ['y', 0], B: ['y', Math.PI], R: ['y', -Math.PI / 2], L: ['y', Math.PI / 2], U: ['x', -Math.PI / 2], D: ['x', Math.PI / 2] };
+  if (!rotations[face]) throw new Error('无效的观察方向');
+  return rotateView(identity, ...rotations[face]);
+}
 // Rotations are applied in screen space, even after turning the cube upside down.
 export const orbitView = (view, dx, dy) => rotateView(rotateView(view, 'y', dx * .007), 'x', -dy * .007);
 export const viewTransform = m => `matrix3d(${[m[0], m[3], m[6], 0, m[1], m[4], m[7], 0, m[2], m[5], m[8], 0, 0, 0, 0, 1].join(',')})`;

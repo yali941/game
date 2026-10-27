@@ -1,9 +1,27 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { newCube, turnLayer, scramble, isSolved } from '../public/cube-rules.js';
-import { AXES, NORMALS, defaultView, orbitView, projectPoint, rotatePoint, cssAngle, selectDragLayer, dragAngle } from '../public/cube-rules.js';
+import { AXES, NORMALS, defaultView, alignedView, applyView, orbitView, projectPoint, rotatePoint, cssAngle, selectDragLayer, dragAngle } from '../public/cube-rules.js';
 const close = (a, b) => a.forEach((n, i) => assert.ok(Math.abs(n - b[i]) < 1e-7, `${a} != ${b}`));
 const css = ([x, y, z]) => [x, -y, z];
+
+test('calibration views face all six directions without reflecting or distorting the cube', () => {
+  for (const [face, normal] of Object.entries(NORMALS)) {
+    const view = alignedView(face);
+    close(applyView(css(normal), view), [0, 0, 1]);
+    const axes = [[1,0,0],[0,1,0],[0,0,1]].map(p => applyView(p, view));
+    for (const axis of axes) assert.ok(Math.abs(Math.hypot(...axis) - 1) < 1e-7);
+    const [a,b,c] = axes;
+    close([a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]],c);
+    // Horizontal dragging on the aligned face must still follow the cursor.
+    const point = normal.map(v => v * 115);
+    const selection = selectDragLayer(normal, normal, point, [40,0], view);
+    assert.ok(selection);
+    const angle = dragAngle([40,0], selection.tangent);
+    const moved = projectPoint(rotatePoint(point, selection.axis, Math.sign(angle) * .01), view);
+    assert.ok(moved[0] > 0);
+  }
+});
 
 test('all nine layers: animation endpoint equals every physical sticker position and normal', () => {
   for (const axis of AXES) for (const index of [-1, 0, 1]) for (const direction of [-1, 1]) {
