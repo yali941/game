@@ -108,6 +108,31 @@ test('scout clips at board corners and cannot be used after the game ends', () =
   assert.throws(()=>fog.scout(g,2,5,5),/已结束/);
 });
 
+test('taunting exposes only an owned stone, preserves turns and scouting, and clears removed stones on undo', () => {
+  const g=fog.newGame();fog.playMove(g,1,7,7);fog.playMove(g,2,0,0);
+  assert.throws(()=>fog.taunt(g,2,0,0),/自己的回合/);
+  assert.throws(()=>fog.taunt(g,1,0,0),/自己的棋子/);
+  assert.throws(()=>fog.taunt(g,1,6,7),/自己的棋子/);
+  assert.throws(()=>fog.taunt(g,1,-1,7),/棋盘内/);
+  const moves=g.moves.length;
+  fog.taunt(g,1,7,7);
+  const seen=fog.fogSnapshot(g,2);
+  assert.equal(seen.board[112],1);assert.equal(seen.board[111],null);assert.equal(seen.board[113],null);
+  assert.equal(seen.visibility.filter(Boolean).length,5,'corner vision plus just the taunted point');
+  assert.deepEqual(seen.taunted,[112]);assert.equal(g.turn,1);assert.equal(g.moves.length,moves);
+  assert.equal(fog.fogSnapshot(g,1).board[0],null,'taunting grants no enemy vision');
+  assert.throws(()=>fog.taunt(g,1,7,7),/已经亮出/);
+  fog.playMove(g,1,9,7);fog.scout(g,2,7,7);fog.taunt(g,2,0,0);
+  assert.equal(g.scoutUsed,true);assert.deepEqual(g.scoutArea,{x:7,y:7});assert.equal(g.turn,2);
+  fog.playMove(g,2,0,2);assert.equal(fog.fogSnapshot(g,2).board[112],1);assert.equal(fog.fogSnapshot(g,2).board[114],null);
+  fog.undoMove(g,2);assert.deepEqual(g.taunted[2],[0]);
+  fog.undoMove(g,2);assert.deepEqual(g.taunted[2],[]);assert.deepEqual(g.taunted[1],[112]);
+  fog.undoMove(g,1);assert.deepEqual(g.taunted[1],[]);
+  fog.playMove(g,1,7,7);assert.equal(fog.fogSnapshot(g,2).board[112],null,'a new stone at an undone point is hidden');
+  fog.agreeDraw(g);assert.throws(()=>fog.taunt(g,2,0,0),/已结束/);
+  assert.deepEqual(fog.fogSnapshot(fog.newGame(),1).taunted,[]);
+});
+
 test('two real clients: private SSE/HTTP/reconnect, stale action rejection, negotiation, ranking and rematch', async t => {
   const {server,rooms}=createGameServer({scoreFile:null,autoDelay:5});
   server.listen(0,'127.0.0.1'); await once(server,'listening');
@@ -171,6 +196,17 @@ test('two real clients: private SSE/HTTP/reconnect, stale action rejection, nego
   assert.equal((await call('sync',b)).game.scoutActive,false);
   assert.equal((await call('scout',a,{x:8,y:8})).http,400);
   await call('move',a,{x:0,y:0});assert.equal((await call('sync',a)).game.board[112],null);
+  assert.equal((await call('taunt',a,{x:0,y:0})).http,400,'not own turn');
+  assert.equal((await call('taunt',b,{x:7,y:7,version:version-1})).http,400,'stale version');
+  request=(await call('request',b,{kind:'undo'})).request;
+  assert.equal((await call('taunt',b,{x:7,y:7})).http,400,'negotiation blocks taunt');
+  await call('respond',a,{id:request.id,accept:false});
+  const taunted=await call('taunt',b,{x:7,y:7});assert.equal(taunted.http,200);assert.equal(taunted.game.turn,1);
+  const publicStone=await sa.wait(s=>s.version===version);assert.equal(publicStone.game.board[112],1);assert.equal(publicStone.game.board[111],null);
+  assert.deepEqual(publicStone.game.taunted,[112]);
+  const rejoined=await events(a);assert.equal((await rejoined.wait(s=>s.version===version)).game.board[112],1);
+  assert.equal((await call('sync',a)).game.board[112],1);
+  assert.equal((await call('taunt',b,{x:7,y:7})).http,400,'duplicate does not spend a turn');
   request=(await call('request',b,{kind:'draw'})).request;
   const draw=await call('respond',a,{id:request.id,accept:true});assert.equal(draw.game.status,'finished');assert.ok(draw.game.board.every(p=>p!==null));
   await call('rematch',a);await call('rematch',b);await call('move',a,{x:1,y:1});await call('leave',b);

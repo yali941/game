@@ -147,8 +147,12 @@ export function createGameServer(options = {}) {
         for (const p of room.players) for (const output of p.streams) output.write(`event: reaction\ndata: ${JSON.stringify(reaction)}\n\n`);
         return json(res, 200, { ok: true });
       }
-      if((isGo || room.game.kind==='fog') && ['/api/move','/api/scout','/api/pass','/api/dead','/api/confirm-score','/api/resume','/api/request','/api/respond','/api/resign'].includes(url.pathname) && data.version!==room.version)throw new Error('棋局已更新，请根据当前棋盘操作');
-      if(room.game.kind==='fog' && url.pathname==='/api/scout') {
+      if((isGo || room.game.kind==='fog') && ['/api/move','/api/scout','/api/taunt','/api/pass','/api/dead','/api/confirm-score','/api/resume','/api/request','/api/respond','/api/resign'].includes(url.pathname) && data.version!==room.version)throw new Error('棋局已更新，请根据当前棋盘操作');
+      if(room.game.kind==='fog' && url.pathname==='/api/taunt') {
+        if(room.request)throw new Error('请先处理悔棋或求和请求');
+        fogRules.taunt(room.game,player.color,data.x,data.y);
+        notifyRoom(room, `${player.color===1?'黑方':'白方'}亮子挑衅：${'ABCDEFGHJKLMNOP'[data.x]}${15-data.y}，这颗棋子本局公开可见`);
+      } else if(room.game.kind==='fog' && url.pathname==='/api/scout') {
         if(room.request)throw new Error('请先处理悔棋或求和请求');
         fogRules.scout(room.game,player.color,data.x,data.y);
       } else if(isGo && ['/api/pass','/api/dead','/api/confirm-score','/api/resume'].includes(url.pathname)){

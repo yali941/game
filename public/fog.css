@@ -16,3 +16,7 @@
 .fog-mode .negotiation-buttons { flex-wrap:wrap; }
 .fog-mode #scout-button[aria-pressed="true"] { background:#e1ead4; border-color:#819b6d; }
 @media(max-width:600px) { .fog-note { font-size:11px; padding:8px 10px; } }
+
+.taunt-ring { fill:none; stroke:#b38129; stroke-width:2.5; stroke-dasharray:5 3; pointer-events:none; }
+.taunt-preview { fill:#e9bd4922; stroke:#bd8825; stroke-width:3; pointer-events:none; }
+.fog-mode #taunt-button[aria-pressed="true"] { background:#f5e7c4; border-color:#b38c47; }
