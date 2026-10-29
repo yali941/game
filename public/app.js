@@ -23,7 +23,7 @@ const game = () => mode === 'online' ? room?.game || (isFog() ? { ...newGame(), 
 const myColor = () => mode === 'online' ? room?.yourColor : mode === 'ai' ? 1 : localGame.turn;
 const bothOnline = () => room?.players.every(p => (p?.connected||p?.auto) && !p.gone);
 const autoPlaying = () => mode==='local' ? roomUI?.isAuto(localGame.turn,localGame) : mode==='online' ? room?.players.find(p=>p?.color===myColor())?.auto : false;
-const canPlay = () => !pending && !stoneDrop && !aiTimer && !autoPlaying() && game().status === 'playing' && (mode !== 'online' ? mode === 'local' || game().turn === 1 : (transport && room && !room.closed && !room.request && bothOnline() && game().turn === myColor()));
+const canPlay = () => !pending && !stoneDrop && !aiTimer && !autoPlaying() && game().bonus !== 'choice' && game().status === 'playing' && (mode !== 'online' ? mode === 'local' || game().turn === 1 : (transport && room && !room.closed && !room.request && bothOnline() && game().turn === myColor()));
 
 function scheduleAiMove() {
   if (mode !== 'ai' || pending || stoneDrop || document.querySelector('dialog[open]') || localGame.status !== 'playing' || localGame.turn !== 2) { clearTimeout(aiTimer); aiTimer = null; return; }
@@ -232,7 +232,7 @@ function renderHover() {
 }
 function syncBoardInteraction() {
   const g = game(), scope = mode !== 'online' ? localGame : room ? room.code + ':' + room.round : 'lobby';
-  const signature = JSON.stringify([g.board, g.turn, g.status]);
+  const signature = JSON.stringify([g.board, g.turn, g.status, g.bonus]);
   const before = boardSnapshot;
   boardSnapshot = { scope, signature, count:g.moves.length };
   if (!before || before.scope !== scope || before.signature !== signature) {
@@ -359,6 +359,10 @@ function render() {
     else {
       title = ai ? (g.turn === 1 ? '轮到你落子' : 'AI 正在思考') : local ? `轮到${g.turn === 1 ? '黑棋' : '白棋'}落子` : g.turn === myColor() ? '轮到你落子' : '等对手落子';
       detail = canPlay() ? '点一下选位，再点同一处落子。' : ai && g.turn === 2 ? 'AI 正在寻找成五或拦截的位置。' : '没有倒计时，慢慢想就好。'; symbol = g.turn === 1 ? '●' : '○';
+      if (!local && !fog && g.bonus) {
+        title = g.turn !== myColor() ? '对手还有一次可选落子' : g.bonus === 'choice' ? '要再下一颗吗？' : '额外落子 · 再下一颗';
+        detail = g.turn !== myColor() ? '等待对手落子或结束回合。' : g.bonus === 'choice' ? '对手昵称包含“芽卫兵”，本回合可额外下一颗，也可以直接结束回合。' : '仍然点两次确认落子；也可以点结束回合放弃。';
+      }
     }
   }
   if (fog && g.retryUsed && canPlay()) { title = '这里已有棋子，请另选一处'; detail = '仍然轮到你；换到空位正常落子，再次撞子结束回合。'; }
@@ -379,6 +383,12 @@ function render() {
   const readyForAction = seated && !pending && !stoneDrop && (local || (transport && bothOnline() && !room.closed));
   const request = local ? null : room?.request;
   const ownRequest = request?.from === myColor();
+  const bonusVisible = !local && !fog && Boolean(g.bonus) && g.status === 'playing' && !room?.closed;
+  $('bonus-actions').hidden = !bonusVisible;
+  $('bonus-message').textContent = g.turn !== myColor() ? '等待对手选择额外落子或结束回合' : g.bonus === 'choice' ? '本回合还可以多下一颗，你来决定。' : '额外落子：在棋盘上点两次确认。';
+  $('bonus-take').hidden = g.turn !== myColor() || g.bonus !== 'choice';
+  $('bonus-end').hidden = g.turn !== myColor();
+  $('bonus-take').disabled = $('bonus-end').disabled = !readyForAction || Boolean(request) || autoPlaying();
   $('negotiation-buttons').hidden = !seated || g.status !== 'playing' || Boolean(room?.closed);
   $('undo-button').disabled = !readyForAction || Boolean(request) || !(local ? g.moves.length : g.moves.some(move => move.color === myColor()));
   $('draw-button').disabled = !readyForAction || Boolean(request);
@@ -395,6 +405,10 @@ function render() {
     const name = request.kind === 'undo' ? '悔棋' : '求和';
     $('request-title').textContent = ownRequest ? `已发送${name}请求` : `对手申请${name}`;
     $('request-detail').textContent = request.kind === 'undo' ? `同意后撤回${g.moves.at(-1)?.color === request.from ? '最近一手' : '双方最近各一手'}，由${request.from === 1 ? '黑棋' : '白棋'}重下。` : '同意后以和棋结束本局。';
+    if (!fog && !local && request.kind === 'undo') {
+      const index = g.moves.findLastIndex(move=>move.color===request.from);
+      $('request-detail').textContent = `同意后撤回 ${g.moves.length-index} 颗棋子，由${request.from===1?'黑棋':'白棋'}重下。${g.moves[index]?.bonusMove?'只恢复额外的一步，不重新获得两步。':''}`;
+    }
     $('request-accept').hidden = ownRequest; $('request-reject').hidden = ownRequest; $('request-cancel').hidden = !ownRequest;
     $('request-accept').disabled = !readyForAction; $('request-reject').disabled = !readyForAction;
     $('request-cancel').disabled = pending || !transport;
@@ -450,6 +464,7 @@ $('online-tab').addEventListener('click', () => switchMode('online'));
 $('local-tab').addEventListener('click', () => switchMode('local'));
 $('ai-tab').addEventListener('click', () => switchMode('ai'));
 $('undo-button').addEventListener('click', () => requestAction('undo'));
+for (const [id,take] of [['bonus-take',true],['bonus-end',false]]) $(id).addEventListener('click',()=>action(async()=>{ tentative=null; hover=null; await api('bonus',{take}); }));
 $('scout-button').addEventListener('click', () => { if (!canPlay() || !game().scoutAvailable) return; scoutSelecting=!scoutSelecting; tauntSelecting=false; tentative=null; hover=null; render(); });
 $('taunt-button').addEventListener('click', () => { if (!canPlay()) return; tauntSelecting=!tauntSelecting; scoutSelecting=false; tentative=null; hover=null; render(); });
 $('draw-button').addEventListener('click', () => requestAction('draw'));

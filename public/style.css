@@ -26,3 +26,9 @@
 .header-actions{display:flex;align-items:center;gap:22px}.header-actions>a{font-size:12px;color:#7c8b71}.nickname-row{display:flex;border:1px solid #dce2d2;border-radius:6px;overflow:hidden}.nickname-row input{min-width:0;width:100%;background:none;border:0;padding:11px;font-size:12px;color:var(--ink);outline-offset:-2px}.nickname-row button{border:0;background:transparent;padding:10px;color:#6f845f;white-space:nowrap;font-size:11px}.rank-list{list-style:none;margin:12px 0 0;padding:0}.rank-list li{display:flex;align-items:center;gap:9px;font-size:11px;padding:9px 0;border-bottom:1px solid #edf0e6}.rank-list li span:first-child{font-size:10px;color:#a2ac96}.rank-list li span:nth-child(2){flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.rank-list li b{font-weight:500;font-size:11px}.rank-list .is-me{color:#427242}.ranking-panel .small-note{font-size:10px;color:#8b9780;line-height:1.8;margin:12px 0 0}.rank-footnote{font-size:9px;line-height:1.8;color:#9ba18f;margin:12px 0 0}.ranking-panel .section-number{margin-bottom:14px}
 @media(max-width:700px){.ranking-panel{grid-column:1/-1}.header-actions{gap:14px}.header-actions>a{font-size:10px}}
 @media(prefers-reduced-motion:reduce){.game-stone.winning-stone{animation:none!important}}
+
+.bonus-actions { margin:12px 0; padding:12px 16px; border:1px solid #c9d4ba; border-radius:12px; background:#edf1e4; display:flex; gap:12px; align-items:center; justify-content:space-between; font-size:13px; color:#43563e; }
+.bonus-actions[hidden] { display:none; }
+.bonus-actions > div { display:flex; gap:8px; flex-shrink:0; }
+.bonus-actions button { width:auto; margin:0; padding:10px 14px; }
+@media(max-width:600px) { .bonus-actions { flex-direction:column; align-items:stretch; } .bonus-actions > div button { flex:1; } }
