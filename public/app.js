@@ -14,6 +14,7 @@ let tentative = null, boardSnapshot = null, stoneDrop = null, stoneDropTimer;
 let roomUI;
 let variant = new URLSearchParams(location.search).get('mode') === 'fog' ? 'fog' : 'standard';
 let probeKey = '', probeDeadline = 0, probeTimer, lastFogKey = '';
+let scoutSelecting = false;
 const isFog = () => mode === 'online' && (room ? room.game.kind === 'fog' : variant === 'fog');
 let lastNoticeId = null, nextReactionAt = 0, reactionTimer, feedbackTimer;
 const reactions = { poop: { emoji: '💩', label: '扔了一个大便', impact: '💩' }, heart: { emoji: '❤️', label: '送来一颗爱心', impact: '💕' }, bomb: { emoji: '💣', label: '扔了一颗炸弹', impact: '💥' }, cry:{emoji:'😭',label:'发来哭哭脸',impact:'😭'} };
@@ -84,7 +85,7 @@ function applyRoom(next, silent = false) {
   const key = p ? `${next.code}:${next.round}:${p.expiresAt}:${p.x}:${p.y}` : '';
   if (key !== probeKey) {
     clearTimeout(probeTimer); probeKey = key; probeDeadline = p ? performance.now() + p.remainingMs : 0;
-    if (p) { probeTimer = setTimeout(render, p.remainingMs + 20); if (!silent) toast('撞到隐藏棋子了！短暂显形，本回合结束。'); }
+    if (p) { probeTimer = setTimeout(render, p.remainingMs + 20); if (!silent) toast(p.retry ? '这里已有棋子，请另选一处。再次撞子才消耗本回合。' : '再次撞到棋子，本回合结束。这颗敌子本局会一直显示。'); }
   }
   if (next.game.kind === 'fog') variant = 'fog'; else variant = 'standard';
   if (!silent && next.game.moves.length > lastMoveCount) soundMove();
@@ -173,17 +174,37 @@ function setupBoard() {
   }
   const filter = element('filter', { id: 'stone-shadow', x: '-50%', y: '-50%', width: '200%', height: '220%', 'color-interpolation-filters': 'sRGB' });
   filter.append(element('feDropShadow', { dx: '1', dy: '4', stdDeviation: '1.8', 'flood-color': '#3d301c', 'flood-opacity': '.38' })); defs.append(filter); board.append(defs);
+  const grid = element('g', { id:'board-grid' }); board.append(grid);
   for (let n = 0; n < SIZE; n++) {
     const pos = 40 + n * 40;
-    board.append(element('line', { x1: 40, y1: pos, x2: 600, y2: pos, class: n === 0 || n === 14 ? 'grid-edge' : 'grid-line' }), element('line', { x1: pos, y1: 40, x2: pos, y2: 600, class: n === 0 || n === 14 ? 'grid-edge' : 'grid-line' }));
+    grid.append(element('line', { x1: 40, y1: pos, x2: 600, y2: pos, class: n === 0 || n === 14 ? 'grid-edge' : 'grid-line' }), element('line', { x1: pos, y1: 40, x2: pos, y2: 600, class: n === 0 || n === 14 ? 'grid-edge' : 'grid-line' }));
     board.append(element('text', { x: pos, y: 22, 'text-anchor': 'middle', class: 'board-coordinate' }, labels[n]), element('text', { x: 19, y: pos + 3, 'text-anchor': 'middle', class: 'board-coordinate' }, String(15 - n)));
   }
-  for (const [x, y] of [[3, 3], [11, 3], [7, 7], [3, 11], [11, 11]]) board.append(element('circle', { cx: 40 + x * 40, cy: 40 + y * 40, r: 3.1, class: 'star-point' }));
-  const mask = element('mask', { id:'fog-mask', maskUnits:'userSpaceOnUse', x:20, y:20, width:600, height:600 });
-  mask.append(element('rect', { x:20,y:20,width:600,height:600,fill:'white' }), element('g', { id:'fog-windows' })); defs.append(mask);
-  board.append(element('g', { id:'fog-layer', 'aria-hidden':'true' }));
-  $('fog-layer').append(element('rect', { x:20,y:20,width:600,height:600,rx:12,fill:'#b5c2b6',opacity:'.86',mask:'url(#fog-mask)' }));
-  board.insertBefore($('fog-layer'), defs.nextSibling);
+  for (const [x, y] of [[3, 3], [11, 3], [7, 7], [3, 11], [11, 11]]) grid.append(element('circle', { cx: 40 + x * 40, cy: 40 + y * 40, r: 3.1, class: 'star-point' }));
+  const feather = element('filter', { id:'fog-feather', x:'-60%',y:'-60%',width:'220%',height:'220%' });
+  feather.append(element('feGaussianBlur', { stdDeviation:13 })); defs.append(feather);
+  const cloud = element('filter', { id:'fog-clouds', x:0,y:0,width:800,height:800,filterUnits:'userSpaceOnUse','color-interpolation-filters':'sRGB' });
+  cloud.append(element('feTurbulence', { type:'fractalNoise',baseFrequency:'.009 .016',numOctaves:3,seed:8 }),
+    element('feColorMatrix', { type:'matrix',values:'0 0 0 0 .97  0 0 0 0 .99  0 0 0 0 .98  1.6 0 0 0 -.38' }),
+    element('feGaussianBlur', { stdDeviation:3 })); defs.append(cloud);
+  const wisp = element('radialGradient', { id:'fog-wisp' });
+  wisp.append(element('stop', { offset:0,'stop-color':'#f5f8f5','stop-opacity':'.75' }),
+    element('stop', { offset:'.48','stop-color':'#e6eee9','stop-opacity':'.35' }),
+    element('stop', { offset:1,'stop-color':'#e6eee9','stop-opacity':0 })); defs.append(wisp);
+  const mask = element('mask', { id:'fog-mask', maskUnits:'userSpaceOnUse', x:0,y:0,width:640,height:640 });
+  mask.append(element('rect', { x:32,y:32,width:576,height:576,rx:26,fill:'white',filter:'url(#fog-feather)' }),
+    element('g', { id:'fog-windows',filter:'url(#fog-feather)' })); defs.append(mask);
+  const gridMask = element('mask', { id:'fog-grid-mask',maskUnits:'userSpaceOnUse',x:0,y:0,width:640,height:640 });
+  gridMask.append(element('g', { id:'fog-grid-windows',filter:'url(#fog-feather)' })); defs.append(gridMask);
+  const mist = element('g', { id:'fog-layer','aria-hidden':'true',mask:'url(#fog-mask)' });
+  mist.append(element('rect', { x:0,y:0,width:640,height:640,fill:'#dce6df',opacity:'.46' }));
+  const clouds = element('g', { class:'fog-cloud-drift' });
+  clouds.append(element('rect', { x:0,y:0,width:800,height:800,filter:'url(#fog-clouds)',opacity:'.85' })); mist.append(clouds);
+  const wisps = element('g', { class:'fog-wisp-drift' });
+  for (const [cx,cy,rx,ry] of [[110,130,230,105],[430,280,285,130],[160,490,270,110],[570,590,230,130]]) {
+    wisps.append(element('ellipse', { cx,cy,rx,ry,fill:'url(#fog-wisp)' }));
+  }
+  mist.append(wisps); board.append(mist);
   board.append(element('g', { id: 'stones' }), element('g', { id:'fog-probe', 'aria-hidden':'true' }), element('g', { id: 'hover' }));
   for (let y = 0; y < SIZE; y++) for (let x = 0; x < SIZE; x++) {
     const cell = element('circle', { cx: 40 + x * 40, cy: 40 + y * 40, r: 19.8, class: 'intersection', role: 'button', tabindex: x === 7 && y === 7 ? '0' : '-1', 'aria-label': `${labels[x]}${15 - y}，空位` });
@@ -198,7 +219,7 @@ function setupBoard() {
       if (event.key === 'ArrowLeft') nx--; else if (event.key === 'ArrowRight') nx++;
       else if (event.key === 'ArrowUp') ny--; else if (event.key === 'ArrowDown') ny++;
       else if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); if (!event.repeat) move(x, y); return; }
-      else if (event.key === 'Escape') { tentative = null; render(); return; } else return;
+      else if (event.key === 'Escape') { tentative = null; scoutSelecting = false; render(); return; } else return;
       event.preventDefault(); nx = Math.max(0, Math.min(14, nx)); ny = Math.max(0, Math.min(14, ny));
       cell.setAttribute('tabindex', '-1'); cells[ny * SIZE + nx].setAttribute('tabindex', '0'); cells[ny * SIZE + nx].focus();
     });
@@ -210,6 +231,11 @@ function renderHover() {
   $('hover').replaceChildren();
   if ((!tentative && !hover) || !canPlay()) return;
   const [x, y] = tentative || hover;
+  if (scoutSelecting) {
+    const left=Math.max(0,x-2), top=Math.max(0,y-2), right=Math.min(14,x+2), bottom=Math.min(14,y+2);
+    $('hover').append(element('rect',{x:20+left*40,y:20+top*40,width:(right-left+1)*40,height:(bottom-top+1)*40,rx:20,class:'scout-preview'}),element('circle',{cx:40+x*40,cy:40+y*40,r:7,class:'scout-center'}));
+    return;
+  }
   if (game().board[y * SIZE + x]) return;
   $('hover').append(element('circle', { cx: 40 + x * 40, cy: 40 + y * 40, r: 16.5, fill: game().turn === 1 ? 'url(#black-stone)' : 'url(#white-stone)', stroke: '#8e9b82', class: tentative ? 'tentative-stone' : 'hover-stone' }));
   if (tentative) $('hover').append(element('circle', { cx:40+x*40,cy:40+y*40,r:20,class:'tentative-ring' }));
@@ -233,17 +259,25 @@ function syncBoardInteraction() {
 function renderFog(g) {
   const fog = isFog();
   $('fog-layer').setAttribute('visibility', fog && g.status !== 'finished' ? 'visible' : 'hidden');
+  if (fog && g.status !== 'finished') $('board-grid').setAttribute('mask','url(#fog-grid-mask)');
+  else $('board-grid').removeAttribute('mask');
   const key = JSON.stringify(g.visibility || []);
   if (key !== lastFogKey) {
-    lastFogKey = key; $('fog-windows').replaceChildren();
+    lastFogKey = key; $('fog-windows').replaceChildren(); $('fog-grid-windows').replaceChildren();
     (g.visibility || []).forEach((visible, i) => {
-      if (visible) $('fog-windows').append(element('rect', { x:20+(i%SIZE)*40,y:20+Math.floor(i/SIZE)*40,width:40.5,height:40.5,fill:'black' }));
+      // Feather only the presentation. Visibility and hidden stones still come from the server.
+      if (visible) {
+        const point = { cx:40+(i%SIZE)*40,cy:40+Math.floor(i/SIZE)*40,r:31 };
+        $('fog-windows').append(element('circle', { ...point,fill:'black' }));
+        $('fog-grid-windows').append(element('circle', { ...point,fill:'white' }));
+      }
     });
   }
   $('fog-probe').replaceChildren();
   const p = g.probe;
   if (fog && g.status === 'playing' && p && performance.now() < probeDeadline) {
-    $('fog-probe').append(element('circle', { cx:40+p.x*40,cy:40+p.y*40,r:16.5,fill:p.color===1?'url(#black-stone)':'url(#white-stone)',class:'fog-probe-stone' }), element('circle', { cx:40+p.x*40,cy:40+p.y*40,r:21,class:'fog-probe-ring' }));
+    if (!g.board[p.y * SIZE + p.x]) $('fog-probe').append(element('circle', { cx:40+p.x*40,cy:40+p.y*40,r:16.5,fill:p.color===1?'url(#black-stone)':'url(#white-stone)',class:'fog-probe-stone' }));
+    $('fog-probe').append(element('circle', { cx:40+p.x*40,cy:40+p.y*40,r:21,class:'fog-probe-ring' }));
   }
 }
 function renderBoard() {
@@ -260,7 +294,8 @@ function renderBoard() {
     const chosen = tentative?.[0] === x && tentative?.[1] === y;
     cells[index].setAttribute('aria-label', `${labels[x]}${15 - y}，${color ? color === 1 ? '黑棋' : '白棋' : chosen ? '已预选，再点一次落子' : color === null ? '迷雾，未知点位' : '空位'}`);
     cells[index].setAttribute('aria-pressed', String(chosen));
-    cells[index].setAttribute('aria-disabled', String(Boolean(color) || !canPlay()));
+    if (chosen && scoutSelecting) cells[index].setAttribute('aria-label',`${labels[x]}${15-y}，已选探雾中心，再点一次确认`);
+    cells[index].setAttribute('aria-disabled', String((Boolean(color) && !scoutSelecting) || !canPlay()));
     if (color && redraw) {
       const order = pulseLine.findIndex(p => p[0] === x && p[1] === y);
       const stone = element('circle', { cx: 40 + x * 40, cy: 40 + y * 40, r: 16.5, fill: `url(#${color === 1 ? 'black' : 'white'}-stone)`, stroke: color === 2 ? '#d9ddcf' : '#252e26', 'stroke-width': '.7', class: `game-stone${order >= 0 ? ' winning-stone' : ''}`, ...(order >= 0 ? { 'data-pulse-order': order } : {}) });
@@ -280,6 +315,7 @@ function renderBoard() {
   renderHover();
 }
 function render() {
+  if (!isFog() || !game().scoutAvailable || game().turn !== myColor() || room?.request || room?.closed) scoutSelecting = false;
   syncBoardInteraction();
   scheduleAiMove();
   const local = mode !== 'online', ai = mode === 'ai', seated = local || Boolean(room), g = game(), fog = isFog();
@@ -289,7 +325,8 @@ function render() {
   $('standard-variant').disabled = pending; $('fog-variant').disabled = pending;
   $('fog-lobby-note').hidden = !fog;
   $('fog-note').hidden = !fog;
-  $('fog-note').textContent = g.status === 'finished' ? '雾已散开 · 全盘揭晓' : g.probe && performance.now() < probeDeadline ? '撞到隐藏棋子 · 短暂显形，本回合结束' : '迷雾五子棋 · 每子照亮周围八点（含斜角）· 盲下撞子消耗一回合';
+  $('fog-note').textContent = g.status === 'finished' ? '雾已散开 · 全盘揭晓' : g.retryUsed ? '这里已有棋子，请另选一处 · 本回合再次撞子才消耗回合' : g.probe && performance.now() < probeDeadline ? '本回合结束 · 这颗敌子本局永久显形' : '周围八点视野 · 首次撞子可换位置 · 再撞结束回合，该敌子永久显形';
+  if (g.scoutActive) $('fog-note').textContent += ' · 探雾生效至本回合结束';
   const rank = document.querySelector('[data-rank-kind]'), rankKind = fog ? 'fog' : 'gomoku';
   if (rank.dataset.rankKind !== rankKind) { rank.dataset.rankKind = rankKind; refreshRankings(); }
   rank.querySelector('.section-number').textContent = fog ? '04 / 迷雾独立胜场榜' : '04 / 联机胜场榜';
@@ -329,7 +366,9 @@ function render() {
       detail = canPlay() ? '点一下选位，再点同一处落子。' : ai && g.turn === 2 ? 'AI 正在寻找成五或拦截的位置。' : '没有倒计时，慢慢想就好。'; symbol = g.turn === 1 ? '●' : '○';
     }
   }
-  if (tentative) { title = `已选 ${labels[tentative[0]]}${15-tentative[1]}`; detail = '再点同一处落子，点其他位置可改选。'; }
+  if (fog && g.retryUsed && canPlay()) { title = '这里已有棋子，请另选一处'; detail = '仍然轮到你；换到空位正常落子，再次撞子结束回合。'; }
+  if (scoutSelecting) { title = '选择探雾中心'; detail = '先点选 5×5 范围，再点同处确认；可再次点探雾按钮取消。'; }
+  if (tentative) { title = `${scoutSelecting ? '探雾中心' : '已选'} ${labels[tentative[0]]}${15-tentative[1]}`; detail = scoutSelecting ? '再点同处消耗一次探雾，之后仍可正常落子。' : '再点同一处落子，点其他位置可改选。'; }
   if (stoneDrop) { title = '棋子落下中…'; detail = '落稳后继续行棋。'; }
   else if (autoPlaying() && g.status==='playing') { detail='已开启托管，可随时取消。'; }
   $('status-title').textContent = title; $('status-detail').textContent = detail; $('status-symbol').textContent = symbol;
@@ -347,6 +386,10 @@ function render() {
   $('negotiation-buttons').hidden = !seated || g.status !== 'playing' || Boolean(room?.closed);
   $('undo-button').disabled = !readyForAction || Boolean(request) || !(local ? g.moves.length : g.moves.some(move => move.color === myColor()));
   $('draw-button').disabled = !readyForAction || Boolean(request);
+  $('scout-button').hidden = !fog || myColor() !== 2;
+  $('scout-button').disabled = !canPlay() || !g.scoutAvailable;
+  $('scout-button').setAttribute('aria-pressed',String(scoutSelecting));
+  $('scout-button').textContent = scoutSelecting ? '取消探雾选位' : g.scoutActive ? '◎ 探雾生效中' : g.scoutAvailable ? '◎ 探雾 · 1 次' : '◎ 探雾已用完';
   $('request-panel').hidden = !request;
   if (request) {
     const name = request.kind === 'undo' ? '悔棋' : '求和';
@@ -371,7 +414,13 @@ function render() {
 }
 function move(x, y) {
   if (!canPlay()) return;
-  if (game().board[y * SIZE + x]) { tentative = null; render(); return; }
+  if (scoutSelecting) {
+    if (tentative?.[0] !== x || tentative?.[1] !== y) { tentative = [x,y]; render(); return; }
+    tentative = null; hover = null;
+    action(async()=>{ await api('scout',{x,y}); scoutSelecting=false; });
+    return;
+  }
+  if (game().board[y * SIZE + x]) { tentative = null; render(); toast('这里已有棋子，请另选一处。'); return; }
   if (tentative?.[0] !== x || tentative?.[1] !== y) { tentative = [x,y]; render(); return; }
   tentative = null; hover = null;
   if (mode !== 'online') {
@@ -393,6 +442,7 @@ $('online-tab').addEventListener('click', () => switchMode('online'));
 $('local-tab').addEventListener('click', () => switchMode('local'));
 $('ai-tab').addEventListener('click', () => switchMode('ai'));
 $('undo-button').addEventListener('click', () => requestAction('undo'));
+$('scout-button').addEventListener('click', () => { if (!canPlay() || !game().scoutAvailable) return; scoutSelecting=!scoutSelecting; tentative=null; hover=null; render(); });
 $('draw-button').addEventListener('click', () => requestAction('draw'));
 $('request-accept').addEventListener('click', () => respondToRequest(true));
 $('request-reject').addEventListener('click', () => respondToRequest(false));

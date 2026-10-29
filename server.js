@@ -147,8 +147,11 @@ export function createGameServer(options = {}) {
         for (const p of room.players) for (const output of p.streams) output.write(`event: reaction\ndata: ${JSON.stringify(reaction)}\n\n`);
         return json(res, 200, { ok: true });
       }
-      if((isGo || room.game.kind==='fog') && ['/api/move','/api/pass','/api/dead','/api/confirm-score','/api/resume','/api/request','/api/respond','/api/resign'].includes(url.pathname) && data.version!==room.version)throw new Error('棋局已更新，请根据当前棋盘操作');
-      if(isGo && ['/api/pass','/api/dead','/api/confirm-score','/api/resume'].includes(url.pathname)){
+      if((isGo || room.game.kind==='fog') && ['/api/move','/api/scout','/api/pass','/api/dead','/api/confirm-score','/api/resume','/api/request','/api/respond','/api/resign'].includes(url.pathname) && data.version!==room.version)throw new Error('棋局已更新，请根据当前棋盘操作');
+      if(room.game.kind==='fog' && url.pathname==='/api/scout') {
+        if(room.request)throw new Error('请先处理悔棋或求和请求');
+        fogRules.scout(room.game,player.color,data.x,data.y);
+      } else if(isGo && ['/api/pass','/api/dead','/api/confirm-score','/api/resume'].includes(url.pathname)){
         if(player.auto)throw new Error('请先取消托管');
         if(room.request)throw new Error('请先处理悔棋或求和请求');
         const moves={'/api/pass':goRules.pass,'/api/dead':goRules.toggleDead,'/api/confirm-score':goRules.confirmScore,'/api/resume':goRules.resume};
