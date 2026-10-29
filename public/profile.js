@@ -12,11 +12,12 @@ async function saveProfile(name) {
 }
 export async function refreshRankings() {
   const panel = document.querySelector('[data-rank-kind]'); if (!panel?.dataset.rankKind) return;
-  const status = document.getElementById('rank-status');
+  const status = document.getElementById('rank-status'), requestedKind = panel.dataset.rankKind;
   try {
     const response = await fetch(`/api/rankings?kind=${panel.dataset.rankKind}`, { headers: profileHeaders(), signal: AbortSignal.timeout(10000) });
     if (!response.ok) throw new Error('榜单暂时不可用');
-    const board = await response.json(), list = document.getElementById('rank-list'); list.replaceChildren();
+    const board = await response.json(); if (panel.dataset.rankKind !== requestedKind) return;
+    const list = document.getElementById('rank-list'); list.replaceChildren();
     const nickname=document.getElementById('nickname');
     if(board.me && profile?.id===board.me.id) {
       if(nickname && document.activeElement!==nickname && nickname.value===profile.name) nickname.value=board.me.name;

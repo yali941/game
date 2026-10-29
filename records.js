@@ -2,7 +2,7 @@ import { randomBytes, createHash } from 'node:crypto';
 import { readFileSync, writeFileSync, mkdirSync, renameSync, existsSync } from 'node:fs';
 import { dirname } from 'node:path';
 
-const kinds = ['gomoku', 'flight', 'jungle', 'uno', 'oldmaid', 'go'];
+const kinds = ['gomoku', 'flight', 'jungle', 'uno', 'oldmaid', 'go', 'fog'];
 const hash = token => createHash('sha256').update(token).digest('hex');
 export function createRecords({ scoreFile = process.env.SCORE_FILE || './data/rankings.json' } = {}) {
   let data = { since: new Date().toISOString(), profiles: {} };
@@ -27,7 +27,7 @@ export function createRecords({ scoreFile = process.env.SCORE_FILE || './data/ra
     if (!p) {
       if (Object.keys(data.profiles).length >= 20000) throw new Error('玩家名额暂时已满');
       token = randomBytes(32).toString('hex');
-      p = { id: randomBytes(8).toString('hex'), name: name || `棋友${randomBytes(2).toString('hex').toUpperCase()}`, wins: { gomoku: 0, flight: 0, jungle: 0, uno: 0, oldmaid: 0, go: 0 } };
+      p = { id: randomBytes(8).toString('hex'), name: name || `棋友${randomBytes(2).toString('hex').toUpperCase()}`, wins: { gomoku: 0, flight: 0, jungle: 0, uno: 0, oldmaid: 0, go: 0, fog: 0 } };
       data.profiles[hash(token)] = p; save();
     } else if (name && name !== p.name) { p.name = name; save(); }
     return { token, id: p.id, name: p.name, wins: p.wins };

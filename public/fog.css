@@ -1,0 +1,9 @@
+.fog-selector { display:flex; gap:6px; padding:5px; margin:16px 0 12px; background:#edf0e9; border-radius:12px; }
+.fog-selector button { flex:1; padding:11px 6px; border:0; border-radius:9px; color:#647263; background:transparent; font:inherit; font-size:13px; cursor:pointer; }
+.fog-selector button[aria-pressed="true"] { background:#fffdf7; color:#354e3c; box-shadow:0 2px 6px #344d3420; font-weight:600; }
+.fog-note { margin:14px 2px 0; padding:11px 14px; background:#e4eae0; color:#52634e; border:1px solid #cad5c2; border-radius:10px; font-size:12px; line-height:1.8; }
+#fog-layer, #fog-probe { pointer-events:none; }
+.fog-probe-stone { filter:url(#stone-shadow); opacity:.9; }
+.fog-probe-ring { fill:none; stroke:#8d623e; stroke-width:2; stroke-dasharray:4 4; }
+.fog-mode .board-footer { font-size:11px; }
+@media(max-width:600px) { .fog-note { font-size:11px; padding:8px 10px; } }
