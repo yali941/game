@@ -19,20 +19,43 @@ test('fog vision includes all eight neighbours, clamps edges and never shares en
   assert.equal(a.probes, undefined);
 });
 
-test('blind collision commits a turn, expires privately, and undo never deletes the collided stone', () => {
-  const g = fog.newGame(); fog.playMove(g, 1, 0, 0);
-  fog.playMove(g, 2, 0, 0, 1000);
-  assert.equal(g.turn, 1); assert.equal(g.board[0], 1); assert.equal(g.moves.length, 2);
-  assert.equal(fog.fogSnapshot(g, 2, 1001).probe.color, 1);
-  assert.equal(fog.fogSnapshot(g, 2, 3400).probe, null);
-  assert.equal(fog.fogSnapshot(g, 1, 1001).probe, null);
-  assert.deepEqual(fog.fogSnapshot(g, 1).moves.at(-1), { color:2, hidden:true });
-  assert.equal(fog.undoMove(g, 2), 1); assert.equal(g.board[0], 1); assert.equal(g.turn, 2);
-  fog.playMove(g, 2, 1, 1); fog.playMove(g, 1, 3, 3);
-  assert.throws(() => fog.playMove(g, 2, 0, 0), /已经有棋子/);
-  assert.equal(g.turn, 2); assert.equal(g.moves.length, 3);
-  fog.undoMove(g, 2);
-  assert.equal(g.board[0], 1); assert.ok(fog.fogSnapshot(g, 2).board.every(p => p === null));
+test('first collision allows one private retry; second distinct collision consumes the turn', () => {
+  const g = fog.newGame(); fog.playMove(g,1,0,0); fog.playMove(g,2,14,14); fog.playMove(g,1,2,0);
+  fog.playMove(g,2,0,0,1000);
+  assert.equal(g.turn,2); assert.equal(g.moves.length,3);
+  assert.equal(fog.fogSnapshot(g,2,1001).retryUsed,true);
+  assert.equal(fog.fogSnapshot(g,1,1001).retryUsed,false);
+  assert.equal(fog.fogSnapshot(g,2,1001).probe.color,1);
+  assert.equal(fog.fogSnapshot(g,2,3400).probe,null);
+  assert.equal(fog.fogSnapshot(g,2,3400).retryUsed,true);
+  assert.equal(fog.fogSnapshot(g,1,1001).probe,null);
+  assert.equal(fog.fogSnapshot(g,2).retrySpot,undefined);
+  assert.throws(()=>fog.playMove(g,2,0,0,4000),/换一个点位/);
+  assert.equal(g.turn,2); assert.equal(g.moves.length,3);
+  fog.playMove(g,2,2,0,5000);
+  assert.equal(g.turn,1); assert.equal(g.moves.length,4); assert.equal(g.retrySpot,null);
+  assert.equal(fog.fogSnapshot(g,2,5001).probe.retry,false);
+  const exposed=fog.fogSnapshot(g,2,10000);
+  assert.equal(exposed.probe,null); assert.equal(exposed.board[2],1);
+  assert.equal(exposed.board[0],null,'the first collision is not permanently exposed');
+  assert.equal(exposed.board[3],null,'the revealed enemy does not grant neighbouring vision');
+  assert.equal(exposed.visibility.filter(Boolean).length,5,'four corner points plus one exposed enemy point');
+  assert.equal(exposed.revealed,undefined,'do not send either player\'s revelation registry');
+  assert.deepEqual(fog.fogSnapshot(g,1).moves.at(-1),{color:2,hidden:true});
+  assert.equal(fog.undoMove(g,2),1); assert.equal(g.board[0],1); assert.equal(g.board[2],1);
+  assert.equal(g.turn,2); assert.equal(g.retrySpot,null);
+  assert.equal(fog.fogSnapshot(g,2,10000).board[2],1,'undo does not erase already exposed information');
+  fog.playMove(g,2,1,1); fog.playMove(g,1,3,3);
+  assert.throws(()=>fog.playMove(g,2,0,0),/已经有棋子/);
+  assert.equal(g.turn,2);
+});
+
+test('a successful retry resets the allowance on the next turn, and ending clears the private hint', () => {
+  const g=fog.newGame();fog.playMove(g,1,0,0);fog.playMove(g,2,0,0);
+  fog.playMove(g,2,14,14);assert.equal(g.turn,1);assert.equal(g.retrySpot,null);assert.equal(g.probes[2],undefined);
+  fog.playMove(g,1,2,0);fog.playMove(g,2,0,0);
+  assert.equal(g.turn,2);assert.equal(fog.fogSnapshot(g,2).retryUsed,true);
+  fog.agreeDraw(g);assert.equal(fog.fogSnapshot(g,2).retryUsed,false);assert.equal(fog.fogSnapshot(g,2).probe,null);
 });
 
 test('fog five wins reveal all stones and draw checks occupied points rather than attempted turns', () => {
@@ -79,16 +102,23 @@ test('two real clients: private SSE/HTTP/reconnect, stale action rejection, nego
   assert.deepEqual(hidden.game.moves,[{color:1,hidden:true}]);
   assert.deepEqual((await call('sync',b)).game,hidden.game);
   assert.equal((await call('move',b,{x:0,y:0,version:0})).http,400);
-  const hit=await call('move',b,{x:0,y:0}); assert.equal(hit.http,200); assert.equal(hit.game.turn,1); assert.ok(hit.game.probe);
-  const privateHit=await sa.wait(s=>s.version===2);assert.equal(privateHit.game.probe,null);assert.deepEqual(privateHit.game.moves.at(-1),{color:2,hidden:true});
-  assert.equal((await call('move',b,{x:1,y:1})).http,400);
-  let request=(await call('request',b,{kind:'undo'})).request;
-  const undo=await call('respond',a,{id:request.id,accept:true}); assert.equal(undo.game.board[0],1);
-  assert.equal(rooms.get(a.code).game.board[0],1);
-  await call('move',b,{x:14,y:14});
+  const hit=await call('move',b,{x:0,y:0}); assert.equal(hit.http,200); assert.equal(hit.game.turn,2); assert.ok(hit.game.probe);assert.equal(hit.game.retryUsed,true);
+  const privateHit=await sa.wait(s=>s.version===2);assert.equal(privateHit.game.probe,null);assert.equal(privateHit.game.moves.length,1);assert.equal(privateHit.game.retryUsed,false);
+  assert.equal((await call('move',b,{x:1,y:0,version:1})).http,400);
   sb.controller.abort();const sb2=await events(b);await sb2.wait(s=>s.players.every(p=>p?.connected));
-  const reconnected=await call('sync',b);assert.equal(reconnected.game.board[0],null);assert.equal(reconnected.game.board[224],2);
-  await call('move',a,{x:1,y:0});await call('move',b,{x:14,y:12});
+  const reconnected=await call('sync',b);assert.equal(reconnected.game.board[0],null);assert.equal(reconnected.game.retryUsed,true);
+  assert.equal((await call('move',b,{x:0,y:0})).http,400);
+  const placed=await call('move',b,{x:14,y:14});assert.equal(placed.game.retryUsed,false);assert.equal(placed.game.turn,1);
+  await call('move',a,{x:1,y:0});await call('move',b,{x:0,y:0});
+  const second=await call('move',b,{x:1,y:0});assert.equal(second.game.turn,1);assert.equal(second.game.probe.retry,false);
+  const exposed=await call('sync',b);assert.equal(exposed.game.board[1],1);assert.equal(exposed.game.board[0],null);assert.equal(exposed.game.board[2],null);
+  const freshConnection=await events(b);const refreshed=await freshConnection.wait(s=>s.version===version);
+  assert.equal(refreshed.game.board[1],1);assert.equal(refreshed.game.board[0],null);
+  assert.equal((await call('move',b,{x:14,y:12})).http,400);
+  let request=(await call('request',b,{kind:'undo'})).request;
+  const undo=await call('respond',a,{id:request.id,accept:true});assert.equal(undo.game.board[0],1);assert.equal(undo.game.board[1],1);
+  assert.equal(rooms.get(a.code).game.retrySpot,null);
+  await call('move',b,{x:14,y:12});
   await call('move',a,{x:2,y:0});await call('move',b,{x:14,y:10});
   await call('move',a,{x:3,y:0});await call('move',b,{x:14,y:8});
   const won=await call('move',a,{x:4,y:0});assert.equal(won.game.winner,1);

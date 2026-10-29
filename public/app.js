@@ -84,7 +84,7 @@ function applyRoom(next, silent = false) {
   const key = p ? `${next.code}:${next.round}:${p.expiresAt}:${p.x}:${p.y}` : '';
   if (key !== probeKey) {
     clearTimeout(probeTimer); probeKey = key; probeDeadline = p ? performance.now() + p.remainingMs : 0;
-    if (p) { probeTimer = setTimeout(render, p.remainingMs + 20); if (!silent) toast('撞到隐藏棋子了！短暂显形，本回合结束。'); }
+    if (p) { probeTimer = setTimeout(render, p.remainingMs + 20); if (!silent) toast(p.retry ? '这里已有棋子，请另选一处。再次撞子才消耗本回合。' : '再次撞到棋子，本回合结束。这颗敌子本局会一直显示。'); }
   }
   if (next.game.kind === 'fog') variant = 'fog'; else variant = 'standard';
   if (!silent && next.game.moves.length > lastMoveCount) soundMove();
@@ -270,7 +270,8 @@ function renderFog(g) {
   $('fog-probe').replaceChildren();
   const p = g.probe;
   if (fog && g.status === 'playing' && p && performance.now() < probeDeadline) {
-    $('fog-probe').append(element('circle', { cx:40+p.x*40,cy:40+p.y*40,r:16.5,fill:p.color===1?'url(#black-stone)':'url(#white-stone)',class:'fog-probe-stone' }), element('circle', { cx:40+p.x*40,cy:40+p.y*40,r:21,class:'fog-probe-ring' }));
+    if (!g.board[p.y * SIZE + p.x]) $('fog-probe').append(element('circle', { cx:40+p.x*40,cy:40+p.y*40,r:16.5,fill:p.color===1?'url(#black-stone)':'url(#white-stone)',class:'fog-probe-stone' }));
+    $('fog-probe').append(element('circle', { cx:40+p.x*40,cy:40+p.y*40,r:21,class:'fog-probe-ring' }));
   }
 }
 function renderBoard() {
@@ -316,7 +317,7 @@ function render() {
   $('standard-variant').disabled = pending; $('fog-variant').disabled = pending;
   $('fog-lobby-note').hidden = !fog;
   $('fog-note').hidden = !fog;
-  $('fog-note').textContent = g.status === 'finished' ? '雾已散开 · 全盘揭晓' : g.probe && performance.now() < probeDeadline ? '撞到隐藏棋子 · 短暂显形，本回合结束' : '迷雾五子棋 · 每子照亮周围八点（含斜角）· 盲下撞子消耗一回合';
+  $('fog-note').textContent = g.status === 'finished' ? '雾已散开 · 全盘揭晓' : g.retryUsed ? '这里已有棋子，请另选一处 · 本回合再次撞子才消耗回合' : g.probe && performance.now() < probeDeadline ? '本回合结束 · 这颗敌子本局永久显形' : '周围八点视野 · 首次撞子可换位置 · 再撞结束回合，该敌子永久显形';
   const rank = document.querySelector('[data-rank-kind]'), rankKind = fog ? 'fog' : 'gomoku';
   if (rank.dataset.rankKind !== rankKind) { rank.dataset.rankKind = rankKind; refreshRankings(); }
   rank.querySelector('.section-number').textContent = fog ? '04 / 迷雾独立胜场榜' : '04 / 联机胜场榜';
@@ -356,6 +357,7 @@ function render() {
       detail = canPlay() ? '点一下选位，再点同一处落子。' : ai && g.turn === 2 ? 'AI 正在寻找成五或拦截的位置。' : '没有倒计时，慢慢想就好。'; symbol = g.turn === 1 ? '●' : '○';
     }
   }
+  if (fog && g.retryUsed && canPlay()) { title = '这里已有棋子，请另选一处'; detail = '仍然轮到你；换到空位正常落子，再次撞子结束回合。'; }
   if (tentative) { title = `已选 ${labels[tentative[0]]}${15-tentative[1]}`; detail = '再点同一处落子，点其他位置可改选。'; }
   if (stoneDrop) { title = '棋子落下中…'; detail = '落稳后继续行棋。'; }
   else if (autoPlaying() && g.status==='playing') { detail='已开启托管，可随时取消。'; }
@@ -398,7 +400,7 @@ function render() {
 }
 function move(x, y) {
   if (!canPlay()) return;
-  if (game().board[y * SIZE + x]) { tentative = null; render(); return; }
+  if (game().board[y * SIZE + x]) { tentative = null; render(); toast('这里已有棋子，请另选一处。'); return; }
   if (tentative?.[0] !== x || tentative?.[1] !== y) { tentative = [x,y]; render(); return; }
   tentative = null; hover = null;
   if (mode !== 'online') {
