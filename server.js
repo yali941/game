@@ -27,7 +27,7 @@ export function createGameServer(options = {}) {
   const tables = createTableService({ ...options, records });
   const rules=r=>r.game.kind==='go'?goRules:r.game.kind==='fog'?fogRules:{newGame,playMove,resign,undoMove,agreeDraw};
   const connected = p => Boolean(p && !p.gone && p.streams.size);
-  const snapshot = (room, player) => ({ code: room.code, yourColor: player?.color, game: room.game.kind==='go'?goRules.goSnapshot(room.game):room.game.kind==='fog'?fogRules.fogSnapshot(room.game,player?.color):room.game, version:room.version||0, seq:room.seq||0, round: room.round, closed: room.closed, ready: room.ready, request: room.request, notice: room.notice, chat:room.chat||[], players: room.players.map(p => p ? { ...publicPlayer(p), color: p.color, connected: connected(p), gone: p.gone } : null) });
+  const snapshot = (room, player) => ({ code: room.code, yourColor: player?.color, game: room.game.kind==='go'?goRules.goSnapshot(room.game):room.game.kind==='fog'?fogRules.fogSnapshot(room.game,player?.color,Date.now(),fogRules.publicStoneColors(room.players)):room.game, version:room.version||0, seq:room.seq||0, round: room.round, closed: room.closed, ready: room.ready, request: room.request, notice: room.notice, chat:room.chat||[], players: room.players.map(p => p ? { ...publicPlayer(p), color: p.color, connected: connected(p), gone: p.gone } : null) });
   const availablePlayer = p => Boolean(p && !p.gone && (connected(p)||p.auto));
   const auto = createAutoScheduler({delay:options.autoDelay,ready:r=>r.game.kind!=='fog' && !r.closed && !r.request && r.game.status==='playing' && (r.game.kind!=='go'||r.game.phase==='play') && r.players.every(availablePlayer),execute:(r,p,m)=>{if(m.action==='pass')goRules.pass(r.game,p.color);else rules(r).playMove(r.game,p.color,m.x,m.y);r.version=(r.version||0)+1;},broadcast});
   function notifyRoom(room, text) { room.notice = { id: randomBytes(8).toString('hex'), text }; }
@@ -91,7 +91,13 @@ export function createGameServer(options = {}) {
       if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('请求格式错误');
       if (url.pathname === '/api/profile') {
         const profile=records.profile(req,data);
-        for(const room of rooms.values()) if(updateRoomProfile(room,profile)) broadcast(room);
+        for(const room of rooms.values()) {
+          const before = room.game.kind==='fog' ? fogRules.publicStoneColors(room.players).join(',') : '';
+          if(updateRoomProfile(room,profile)) {
+            if(room.game.kind==='fog' && before!==fogRules.publicStoneColors(room.players).join(',')) room.version=(room.version||0)+1;
+            broadcast(room);
+          }
+        }
         tables.updateProfile(profile);
         return json(res,200,profile);
       }
@@ -182,7 +188,8 @@ export function createGameServer(options = {}) {
       } else if (url.pathname === '/api/move') {
         if(player.auto) throw new Error('请先取消托管再手动落子');
         if (room.request) throw new Error('请先处理悔棋或求和请求');
-        rules(room).playMove(room.game, player.color, data.x, data.y);
+        if(room.game.kind==='fog') fogRules.playMove(room.game,player.color,data.x,data.y,now,fogRules.publicStoneColors(room.players));
+        else rules(room).playMove(room.game, player.color, data.x, data.y);
       } else if (url.pathname === '/api/resign') { rules(room).resign(room.game, player.color); room.request = null; }
       else if (url.pathname === '/api/rematch') {
         if (room.game.status !== 'finished') throw new Error('本局尚未结束');
