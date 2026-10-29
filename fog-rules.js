@@ -2,7 +2,7 @@ import { SIZE, newGame as standardGame, winningLine, resign, agreeDraw } from '.
 
 export { resign, agreeDraw };
 export const PROBE_MS = 2400;
-export const publicStoneColors = players => players.filter(p => p?.name === '芽卫兵').map(p => p.color);
+export const publicStoneColors = players => players.filter(p => p?.name?.includes('芽卫兵')).map(p => p.color);
 export function newGame() {
   return { ...standardGame(), kind: 'fog', probes: {}, retrySpot: null, revealed: { 1: [], 2: [] }, taunted: { 1: [], 2: [] }, scoutUsed: false, scoutArea: null };
 }

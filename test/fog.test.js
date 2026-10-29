@@ -216,7 +216,9 @@ test('two real clients: private SSE/HTTP/reconnect, stale action rejection, nego
 });
 
  test('named public stones expose no neighbouring points or opponent vision, and visible collisions do not consume retries', () => {
-  assert.deepEqual(fog.publicStoneColors([{name:'芽卫兵',color:1},null,{name:'小芽卫兵',color:2}]),[1]);
+  assert.deepEqual(fog.publicStoneColors([{name:'芽卫兵',color:1},null,{name:'小芽卫兵',color:2}]),[1,2]);
+  for(const name of ['芽卫兵123','小芽卫兵大王','芽卫兵']) assert.deepEqual(fog.publicStoneColors([{name,color:2}]),[2]);
+  for(const name of ['芽卫','芽 卫兵','芽卫冰','普通玩家']) assert.deepEqual(fog.publicStoneColors([{name,color:1},null,{}]),[]);
   assert.deepEqual(fog.publicStoneColors([{name:'芽卫兵',color:1},{name:'芽卫兵',color:2}]),[1,2]);
   for(const named of [1,2]) {
     const g=fog.newGame();fog.playMove(g,1,0,0);fog.playMove(g,2,14,14);
@@ -249,7 +251,7 @@ test('named visibility follows authenticated nickname, live SSE, reconnect and s
     (async()=>{let buffer='';const decoder=new TextDecoder();try{for await(const chunk of response.body){buffer+=decoder.decode(chunk,{stream:true});let at;while((at=buffer.indexOf('\n\n'))>=0){const frame=buffer.slice(0,at);buffer=buffer.slice(at+2);if(frame.startsWith('data: '))states.push(JSON.parse(frame.slice(6)));}}}catch(e){if(e.name!=='AbortError')throw e;}})();
     return {async wait(fn){for(let i=0;i<100;i++){const s=states.findLast(fn);if(s)return s;await new Promise(r=>setTimeout(r,10));}throw Error('SSE timed out');}};
   }
-  const named=await api('profile',{name:'芽卫兵'}),other=await api('profile',{name:'雾中对手'});
+  const named=await api('profile',{name:'小芽卫兵'}),other=await api('profile',{name:'雾中对手'});
   const a=await api('create',{mode:'fog'},null,named.token),b=await api('join',{room:a.code},null,other.token);
   const sa=await connect(a),sb=await connect(b);await sa.wait(s=>s.players.every(p=>p?.connected));
   const sync=p=>api('sync',{room:a.code},p.token);
@@ -260,10 +262,10 @@ test('named visibility follows authenticated nickname, live SSE, reconnect and s
   await call('move',b,{x:0,y:0});assert.equal((await sync(a)).game.board[0],null);
   const reconnected=await connect(b);assert.equal((await reconnected.wait(s=>s.game.moves.length===2)).game.board[112],1);
   const version=(await sync(a)).version;
-  await api('profile',{name:'芽卫兵2'},null,named.token);
+  await api('profile',{name:'雾中玩家'},null,named.token);
   const renamed=await sb.wait(s=>s.version>version);assert.equal(renamed.game.board[112],null);
   assert.equal((await call('move',a,{x:8,y:7,version})).http,400,'nickname visibility changes invalidate stale actions');
-  await api('profile',{name:'芽卫兵'},null,named.token);
+  await api('profile',{name:'芽卫兵123'},null,named.token);
   await sb.wait(s=>s.version>renamed.version && s.game.board[112]===1);
   await call('move',a,{x:10,y:7,publicColors:[2]});assert.equal((await sync(a)).game.board[0],null,'client cannot grant itself extra vision');
   assert.equal((await sync(b)).game.board[115],1);
