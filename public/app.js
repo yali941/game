@@ -173,17 +173,37 @@ function setupBoard() {
   }
   const filter = element('filter', { id: 'stone-shadow', x: '-50%', y: '-50%', width: '200%', height: '220%', 'color-interpolation-filters': 'sRGB' });
   filter.append(element('feDropShadow', { dx: '1', dy: '4', stdDeviation: '1.8', 'flood-color': '#3d301c', 'flood-opacity': '.38' })); defs.append(filter); board.append(defs);
+  const grid = element('g', { id:'board-grid' }); board.append(grid);
   for (let n = 0; n < SIZE; n++) {
     const pos = 40 + n * 40;
-    board.append(element('line', { x1: 40, y1: pos, x2: 600, y2: pos, class: n === 0 || n === 14 ? 'grid-edge' : 'grid-line' }), element('line', { x1: pos, y1: 40, x2: pos, y2: 600, class: n === 0 || n === 14 ? 'grid-edge' : 'grid-line' }));
+    grid.append(element('line', { x1: 40, y1: pos, x2: 600, y2: pos, class: n === 0 || n === 14 ? 'grid-edge' : 'grid-line' }), element('line', { x1: pos, y1: 40, x2: pos, y2: 600, class: n === 0 || n === 14 ? 'grid-edge' : 'grid-line' }));
     board.append(element('text', { x: pos, y: 22, 'text-anchor': 'middle', class: 'board-coordinate' }, labels[n]), element('text', { x: 19, y: pos + 3, 'text-anchor': 'middle', class: 'board-coordinate' }, String(15 - n)));
   }
-  for (const [x, y] of [[3, 3], [11, 3], [7, 7], [3, 11], [11, 11]]) board.append(element('circle', { cx: 40 + x * 40, cy: 40 + y * 40, r: 3.1, class: 'star-point' }));
-  const mask = element('mask', { id:'fog-mask', maskUnits:'userSpaceOnUse', x:20, y:20, width:600, height:600 });
-  mask.append(element('rect', { x:20,y:20,width:600,height:600,fill:'white' }), element('g', { id:'fog-windows' })); defs.append(mask);
-  board.append(element('g', { id:'fog-layer', 'aria-hidden':'true' }));
-  $('fog-layer').append(element('rect', { x:20,y:20,width:600,height:600,rx:12,fill:'#b5c2b6',opacity:'.86',mask:'url(#fog-mask)' }));
-  board.insertBefore($('fog-layer'), defs.nextSibling);
+  for (const [x, y] of [[3, 3], [11, 3], [7, 7], [3, 11], [11, 11]]) grid.append(element('circle', { cx: 40 + x * 40, cy: 40 + y * 40, r: 3.1, class: 'star-point' }));
+  const feather = element('filter', { id:'fog-feather', x:'-60%',y:'-60%',width:'220%',height:'220%' });
+  feather.append(element('feGaussianBlur', { stdDeviation:13 })); defs.append(feather);
+  const cloud = element('filter', { id:'fog-clouds', x:0,y:0,width:800,height:800,filterUnits:'userSpaceOnUse','color-interpolation-filters':'sRGB' });
+  cloud.append(element('feTurbulence', { type:'fractalNoise',baseFrequency:'.009 .016',numOctaves:3,seed:8 }),
+    element('feColorMatrix', { type:'matrix',values:'0 0 0 0 .97  0 0 0 0 .99  0 0 0 0 .98  1.6 0 0 0 -.38' }),
+    element('feGaussianBlur', { stdDeviation:3 })); defs.append(cloud);
+  const wisp = element('radialGradient', { id:'fog-wisp' });
+  wisp.append(element('stop', { offset:0,'stop-color':'#f5f8f5','stop-opacity':'.75' }),
+    element('stop', { offset:'.48','stop-color':'#e6eee9','stop-opacity':'.35' }),
+    element('stop', { offset:1,'stop-color':'#e6eee9','stop-opacity':0 })); defs.append(wisp);
+  const mask = element('mask', { id:'fog-mask', maskUnits:'userSpaceOnUse', x:0,y:0,width:640,height:640 });
+  mask.append(element('rect', { x:32,y:32,width:576,height:576,rx:26,fill:'white',filter:'url(#fog-feather)' }),
+    element('g', { id:'fog-windows',filter:'url(#fog-feather)' })); defs.append(mask);
+  const gridMask = element('mask', { id:'fog-grid-mask',maskUnits:'userSpaceOnUse',x:0,y:0,width:640,height:640 });
+  gridMask.append(element('g', { id:'fog-grid-windows',filter:'url(#fog-feather)' })); defs.append(gridMask);
+  const mist = element('g', { id:'fog-layer','aria-hidden':'true',mask:'url(#fog-mask)' });
+  mist.append(element('rect', { x:0,y:0,width:640,height:640,fill:'#dce6df',opacity:'.46' }));
+  const clouds = element('g', { class:'fog-cloud-drift' });
+  clouds.append(element('rect', { x:0,y:0,width:800,height:800,filter:'url(#fog-clouds)',opacity:'.85' })); mist.append(clouds);
+  const wisps = element('g', { class:'fog-wisp-drift' });
+  for (const [cx,cy,rx,ry] of [[110,130,230,105],[430,280,285,130],[160,490,270,110],[570,590,230,130]]) {
+    wisps.append(element('ellipse', { cx,cy,rx,ry,fill:'url(#fog-wisp)' }));
+  }
+  mist.append(wisps); board.append(mist);
   board.append(element('g', { id: 'stones' }), element('g', { id:'fog-probe', 'aria-hidden':'true' }), element('g', { id: 'hover' }));
   for (let y = 0; y < SIZE; y++) for (let x = 0; x < SIZE; x++) {
     const cell = element('circle', { cx: 40 + x * 40, cy: 40 + y * 40, r: 19.8, class: 'intersection', role: 'button', tabindex: x === 7 && y === 7 ? '0' : '-1', 'aria-label': `${labels[x]}${15 - y}，空位` });
@@ -233,11 +253,18 @@ function syncBoardInteraction() {
 function renderFog(g) {
   const fog = isFog();
   $('fog-layer').setAttribute('visibility', fog && g.status !== 'finished' ? 'visible' : 'hidden');
+  if (fog && g.status !== 'finished') $('board-grid').setAttribute('mask','url(#fog-grid-mask)');
+  else $('board-grid').removeAttribute('mask');
   const key = JSON.stringify(g.visibility || []);
   if (key !== lastFogKey) {
-    lastFogKey = key; $('fog-windows').replaceChildren();
+    lastFogKey = key; $('fog-windows').replaceChildren(); $('fog-grid-windows').replaceChildren();
     (g.visibility || []).forEach((visible, i) => {
-      if (visible) $('fog-windows').append(element('rect', { x:20+(i%SIZE)*40,y:20+Math.floor(i/SIZE)*40,width:40.5,height:40.5,fill:'black' }));
+      // Feather only the presentation. Visibility and hidden stones still come from the server.
+      if (visible) {
+        const point = { cx:40+(i%SIZE)*40,cy:40+Math.floor(i/SIZE)*40,r:31 };
+        $('fog-windows').append(element('circle', { ...point,fill:'black' }));
+        $('fog-grid-windows').append(element('circle', { ...point,fill:'white' }));
+      }
     });
   }
   $('fog-probe').replaceChildren();
