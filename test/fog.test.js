@@ -72,6 +72,42 @@ test('fog five wins reveal all stones and draw checks occupied points rather tha
   }
 });
 
+test('white scout privately reveals 5x5 for one turn, validates limits and cannot be refunded by undo', () => {
+  const g=fog.newGame();
+  assert.throws(()=>fog.scout(g,1,7,7),/白方/);
+  assert.throws(()=>fog.scout(g,2,7,7),/自己的回合/);
+  fog.playMove(g,1,7,7);
+  assert.throws(()=>fog.scout(g,2,15,7),/探雾中心/);assert.equal(g.scoutUsed,false);
+  const blackBefore=fog.fogSnapshot(g,1);
+  fog.scout(g,2,7,7);
+  assert.equal(g.turn,2);assert.equal(g.moves.length,1);
+  const seen=fog.fogSnapshot(g,2);assert.equal(seen.visibility.filter(Boolean).length,25);assert.equal(seen.board[112],1);assert.equal(seen.scoutActive,true);
+  assert.equal(seen.board[7*15+10],null);assert.equal(seen.scoutArea,undefined);
+  assert.deepEqual(fog.fogSnapshot(g,1),blackBefore,'opponent snapshot contains no scout information');
+  assert.throws(()=>fog.scout(g,2,3,3),/已用完/);
+  assert.throws(()=>fog.playMove(g,2,7,7),/已经有棋子/);assert.equal(g.scoutArea.x,7);
+  fog.playMove(g,2,14,14);
+  assert.equal(fog.fogSnapshot(g,2).board[112],null);assert.equal(fog.fogSnapshot(g,2).scoutActive,false);
+  fog.undoMove(g,2);assert.equal(g.scoutUsed,true);assert.equal(g.scoutArea,null);
+  assert.throws(()=>fog.scout(g,2,7,7),/已用完/);
+  assert.equal(fog.fogSnapshot(fog.newGame(),2).scoutAvailable,true);
+});
+
+test('scout lasts through the first collision but expires on the second, preserving permanent revelation', () => {
+  const g=fog.newGame();fog.playMove(g,1,0,0);fog.playMove(g,2,14,14);fog.playMove(g,1,2,0);
+  fog.scout(g,2,7,7);fog.playMove(g,2,0,0);
+  assert.equal(fog.fogSnapshot(g,2).scoutActive,true);
+  fog.playMove(g,2,2,0);
+  const result=fog.fogSnapshot(g,2);assert.equal(result.scoutActive,false);assert.equal(result.board[112],null);assert.equal(result.board[2],1);
+});
+
+test('scout clips at board corners and cannot be used after the game ends', () => {
+  const g=fog.newGame();fog.playMove(g,1,14,14);fog.scout(g,2,0,0);
+  assert.equal(fog.fogSnapshot(g,2).visibility.filter(Boolean).length,9);
+  fog.agreeDraw(g);assert.equal(fog.fogSnapshot(g,2).scoutActive,false);assert.equal(fog.fogSnapshot(g,2).scoutAvailable,false);
+  assert.throws(()=>fog.scout(g,2,5,5),/已结束/);
+});
+
 test('two real clients: private SSE/HTTP/reconnect, stale action rejection, negotiation, ranking and rematch', async t => {
   const {server,rooms}=createGameServer({scoreFile:null,autoDelay:5});
   server.listen(0,'127.0.0.1'); await once(server,'listening');
@@ -126,7 +162,16 @@ test('two real clients: private SSE/HTTP/reconnect, stale action rejection, nego
   const rank=await (await fetch(`${base}/api/rankings?kind=fog`)).json();assert.equal(rank.entries[0].name,'雾黑');assert.equal(rank.entries[0].wins,1);
   const standard=await (await fetch(`${base}/api/rankings?kind=gomoku`)).json();assert.equal(standard.entries.length,0);
   await call('rematch',a);const next=await call('rematch',b);assert.equal(next.game.kind,'fog');assert.equal(next.yourColor,1);assert.ok(next.game.board.every(p=>p===null));
-  await call('move',b,{x:7,y:7});request=(await call('request',b,{kind:'draw'})).request;
+  assert.equal((await call('scout',b,{x:7,y:7})).http,400,'black cannot scout');
+  assert.equal((await call('scout',a,{x:7,y:7})).http,400,'white must wait for own turn');
+  await call('move',b,{x:7,y:7});
+  assert.equal((await call('scout',a,{x:7,y:7,version:version-1})).http,400);
+  const scanned=await call('scout',a,{x:7,y:7});assert.equal(scanned.http,200);assert.equal(scanned.game.scoutActive,true);assert.equal(scanned.game.board[112],1);
+  assert.equal((await call('sync',a)).game.scoutActive,true);
+  assert.equal((await call('sync',b)).game.scoutActive,false);
+  assert.equal((await call('scout',a,{x:8,y:8})).http,400);
+  await call('move',a,{x:0,y:0});assert.equal((await call('sync',a)).game.board[112],null);
+  request=(await call('request',b,{kind:'draw'})).request;
   const draw=await call('respond',a,{id:request.id,accept:true});assert.equal(draw.game.status,'finished');assert.ok(draw.game.board.every(p=>p!==null));
   await call('rematch',a);await call('rematch',b);await call('move',a,{x:1,y:1});await call('leave',b);
   const left=await call('sync',a);assert.equal(left.game.reason,'leave');assert.ok(left.game.board.every(p=>p!==null));

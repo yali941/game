@@ -11,4 +11,8 @@
 .fog-probe-stone { filter:url(#stone-shadow); opacity:.9; }
 .fog-probe-ring { fill:none; stroke:#8d623e; stroke-width:2; stroke-dasharray:4 4; }
 .fog-mode .board-footer { font-size:11px; }
+.scout-preview { fill:#f4edba33; stroke:#6d855d; stroke-width:2; stroke-dasharray:8 5; pointer-events:none; }
+.scout-center { fill:#f9f6d5; stroke:#657f53; stroke-width:2; pointer-events:none; }
+.fog-mode .negotiation-buttons { flex-wrap:wrap; }
+.fog-mode #scout-button[aria-pressed="true"] { background:#e1ead4; border-color:#819b6d; }
 @media(max-width:600px) { .fog-note { font-size:11px; padding:8px 10px; } }
