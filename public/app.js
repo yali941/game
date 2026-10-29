@@ -14,7 +14,7 @@ let tentative = null, boardSnapshot = null, stoneDrop = null, stoneDropTimer;
 let roomUI;
 let variant = new URLSearchParams(location.search).get('mode') === 'fog' ? 'fog' : 'standard';
 let probeKey = '', probeDeadline = 0, probeTimer, lastFogKey = '';
-let scoutSelecting = false;
+let scoutSelecting = false, tauntSelecting = false;
 const isFog = () => mode === 'online' && (room ? room.game.kind === 'fog' : variant === 'fog');
 let lastNoticeId = null, nextReactionAt = 0, reactionTimer, feedbackTimer;
 const reactions = { poop: { emoji: '💩', label: '扔了一个大便', impact: '💩' }, heart: { emoji: '❤️', label: '送来一颗爱心', impact: '💕' }, bomb: { emoji: '💣', label: '扔了一颗炸弹', impact: '💥' }, cry:{emoji:'😭',label:'发来哭哭脸',impact:'😭'} };
@@ -219,7 +219,7 @@ function setupBoard() {
       if (event.key === 'ArrowLeft') nx--; else if (event.key === 'ArrowRight') nx++;
       else if (event.key === 'ArrowUp') ny--; else if (event.key === 'ArrowDown') ny++;
       else if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); if (!event.repeat) move(x, y); return; }
-      else if (event.key === 'Escape') { tentative = null; scoutSelecting = false; render(); return; } else return;
+      else if (event.key === 'Escape') { tentative = null; scoutSelecting = false; tauntSelecting = false; render(); return; } else return;
       event.preventDefault(); nx = Math.max(0, Math.min(14, nx)); ny = Math.max(0, Math.min(14, ny));
       cell.setAttribute('tabindex', '-1'); cells[ny * SIZE + nx].setAttribute('tabindex', '0'); cells[ny * SIZE + nx].focus();
     });
@@ -234,6 +234,10 @@ function renderHover() {
   if (scoutSelecting) {
     const left=Math.max(0,x-2), top=Math.max(0,y-2), right=Math.min(14,x+2), bottom=Math.min(14,y+2);
     $('hover').append(element('rect',{x:20+left*40,y:20+top*40,width:(right-left+1)*40,height:(bottom-top+1)*40,rx:20,class:'scout-preview'}),element('circle',{cx:40+x*40,cy:40+y*40,r:7,class:'scout-center'}));
+    return;
+  }
+  if (tauntSelecting) {
+    if (game().board[y*SIZE+x] === myColor()) $('hover').append(element('circle',{cx:40+x*40,cy:40+y*40,r:23,class:'taunt-preview'}));
     return;
   }
   if (game().board[y * SIZE + x]) return;
@@ -283,7 +287,7 @@ function renderFog(g) {
 function renderBoard() {
   const g = game(), stones = $('stones');
   renderFog(g);
-  const stoneKey = JSON.stringify([g.board, g.line, g.moves.at(-1)]);
+  const stoneKey = JSON.stringify([g.board, g.line, g.moves.at(-1), g.taunted]);
   const redraw = stoneKey !== renderedStoneKey;
   if (redraw) { stones.replaceChildren(); renderedStoneKey = stoneKey; }
   const recent = g.moves.at(-1);
@@ -295,7 +299,9 @@ function renderBoard() {
     cells[index].setAttribute('aria-label', `${labels[x]}${15 - y}，${color ? color === 1 ? '黑棋' : '白棋' : chosen ? '已预选，再点一次落子' : color === null ? '迷雾，未知点位' : '空位'}`);
     cells[index].setAttribute('aria-pressed', String(chosen));
     if (chosen && scoutSelecting) cells[index].setAttribute('aria-label',`${labels[x]}${15-y}，已选探雾中心，再点一次确认`);
-    cells[index].setAttribute('aria-disabled', String((Boolean(color) && !scoutSelecting) || !canPlay()));
+    if (g.taunted?.includes(index)) cells[index].setAttribute('aria-label',`${labels[x]}${15-y}，${color===1?'黑棋':'白棋'}，亮子挑衅，公开可见`);
+    if (chosen && tauntSelecting) cells[index].setAttribute('aria-label',`${labels[x]}${15-y}，已选亮子，再点一次公开`);
+    cells[index].setAttribute('aria-disabled', String(!canPlay() || (tauntSelecting ? color !== myColor() || g.taunted?.includes(index) : Boolean(color) && !scoutSelecting)));
     if (color && redraw) {
       const order = pulseLine.findIndex(p => p[0] === x && p[1] === y);
       const stone = element('circle', { cx: 40 + x * 40, cy: 40 + y * 40, r: 16.5, fill: `url(#${color === 1 ? 'black' : 'white'}-stone)`, stroke: color === 2 ? '#d9ddcf' : '#252e26', 'stroke-width': '.7', class: `game-stone${order >= 0 ? ' winning-stone' : ''}`, ...(order >= 0 ? { 'data-pulse-order': order } : {}) });
@@ -305,6 +311,7 @@ function renderBoard() {
         const falling = element('g', { class:'stone-drop', 'data-drop-coordinate':labels[x]+(15-y) });
         falling.append(stone, element('circle', { cx:40+x*40,cy:40+y*40,r:3,class:'last-point' })); stones.append(falling);
       } else stones.append(stone);
+      if (g.taunted?.includes(index)) stones.append(element('circle',{cx:40+x*40,cy:40+y*40,r:21,class:'taunt-ring'}));
     }
   });
   if (redraw) for (const [x, y] of g.line) stones.append(element('circle', { cx: 40 + x * 40, cy: 40 + y * 40, r: 19.5, class: 'win-ring' }));
@@ -315,6 +322,7 @@ function renderBoard() {
   renderHover();
 }
 function render() {
+  if (!isFog() || game().status !== 'playing' || game().turn !== myColor() || room?.request || room?.closed) tauntSelecting = false;
   if (!isFog() || !game().scoutAvailable || game().turn !== myColor() || room?.request || room?.closed) scoutSelecting = false;
   syncBoardInteraction();
   scheduleAiMove();
@@ -327,6 +335,7 @@ function render() {
   $('fog-note').hidden = !fog;
   $('fog-note').textContent = g.status === 'finished' ? '雾已散开 · 全盘揭晓' : g.retryUsed ? '这里已有棋子，请另选一处 · 本回合再次撞子才消耗回合' : g.probe && performance.now() < probeDeadline ? '本回合结束 · 这颗敌子本局永久显形' : '周围八点视野 · 首次撞子可换位置 · 再撞结束回合，该敌子永久显形';
   if (g.scoutActive) $('fog-note').textContent += ' · 探雾生效至本回合结束';
+  if (g.taunted?.length) $('fog-note').textContent += ' · 金圈棋子为主动亮子，双方公开可见';
   const rank = document.querySelector('[data-rank-kind]'), rankKind = fog ? 'fog' : 'gomoku';
   if (rank.dataset.rankKind !== rankKind) { rank.dataset.rankKind = rankKind; refreshRankings(); }
   rank.querySelector('.section-number').textContent = fog ? '04 / 迷雾独立胜场榜' : '04 / 联机胜场榜';
@@ -369,6 +378,7 @@ function render() {
   if (fog && g.retryUsed && canPlay()) { title = '这里已有棋子，请另选一处'; detail = '仍然轮到你；换到空位正常落子，再次撞子结束回合。'; }
   if (scoutSelecting) { title = '选择探雾中心'; detail = '先点选 5×5 范围，再点同处确认；可再次点探雾按钮取消。'; }
   if (tentative) { title = `${scoutSelecting ? '探雾中心' : '已选'} ${labels[tentative[0]]}${15-tentative[1]}`; detail = scoutSelecting ? '再点同处消耗一次探雾，之后仍可正常落子。' : '再点同一处落子，点其他位置可改选。'; }
+  if (tauntSelecting) { title = tentative ? `亮子 ${labels[tentative[0]]}${15-tentative[1]}` : '选择要亮出的己方棋子'; detail = tentative ? '再点这颗棋子向对手公开，本局不能藏回，不占落子机会。' : '点选自己的棋子，再点一次确认；再次点按钮可取消。'; }
   if (stoneDrop) { title = '棋子落下中…'; detail = '落稳后继续行棋。'; }
   else if (autoPlaying() && g.status==='playing') { detail='已开启托管，可随时取消。'; }
   $('status-title').textContent = title; $('status-detail').textContent = detail; $('status-symbol').textContent = symbol;
@@ -386,6 +396,10 @@ function render() {
   $('negotiation-buttons').hidden = !seated || g.status !== 'playing' || Boolean(room?.closed);
   $('undo-button').disabled = !readyForAction || Boolean(request) || !(local ? g.moves.length : g.moves.some(move => move.color === myColor()));
   $('draw-button').disabled = !readyForAction || Boolean(request);
+  $('taunt-button').hidden = !fog;
+  $('taunt-button').disabled = !canPlay() || !g.board.some((c,i)=>c===myColor() && !g.taunted?.includes(i));
+  $('taunt-button').setAttribute('aria-pressed',String(tauntSelecting));
+  $('taunt-button').textContent = tauntSelecting ? '取消亮子选位' : '⚑ 亮子挑衅';
   $('scout-button').hidden = !fog || myColor() !== 2;
   $('scout-button').disabled = !canPlay() || !g.scoutAvailable;
   $('scout-button').setAttribute('aria-pressed',String(scoutSelecting));
@@ -414,6 +428,14 @@ function render() {
 }
 function move(x, y) {
   if (!canPlay()) return;
+  if (tauntSelecting) {
+    if (game().board[y*SIZE+x] !== myColor()) { toast('请选择自己的棋子。'); return; }
+    if (game().taunted?.includes(y*SIZE+x)) { toast('这颗棋子已经亮出。'); return; }
+    if (tentative?.[0] !== x || tentative?.[1] !== y) { tentative=[x,y]; render(); return; }
+    tentative=null; hover=null;
+    action(async()=>{ await api('taunt',{x,y}); tauntSelecting=false; });
+    return;
+  }
   if (scoutSelecting) {
     if (tentative?.[0] !== x || tentative?.[1] !== y) { tentative = [x,y]; render(); return; }
     tentative = null; hover = null;
@@ -442,7 +464,8 @@ $('online-tab').addEventListener('click', () => switchMode('online'));
 $('local-tab').addEventListener('click', () => switchMode('local'));
 $('ai-tab').addEventListener('click', () => switchMode('ai'));
 $('undo-button').addEventListener('click', () => requestAction('undo'));
-$('scout-button').addEventListener('click', () => { if (!canPlay() || !game().scoutAvailable) return; scoutSelecting=!scoutSelecting; tentative=null; hover=null; render(); });
+$('scout-button').addEventListener('click', () => { if (!canPlay() || !game().scoutAvailable) return; scoutSelecting=!scoutSelecting; tauntSelecting=false; tentative=null; hover=null; render(); });
+$('taunt-button').addEventListener('click', () => { if (!canPlay()) return; tauntSelecting=!tauntSelecting; scoutSelecting=false; tentative=null; hover=null; render(); });
 $('draw-button').addEventListener('click', () => requestAction('draw'));
 $('request-accept').addEventListener('click', () => respondToRequest(true));
 $('request-reject').addEventListener('click', () => respondToRequest(false));

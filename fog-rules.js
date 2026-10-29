@@ -3,13 +3,14 @@ import { SIZE, newGame as standardGame, winningLine, resign, agreeDraw } from '.
 export { resign, agreeDraw };
 export const PROBE_MS = 2400;
 export function newGame() {
-  return { ...standardGame(), kind: 'fog', probes: {}, retrySpot: null, revealed: { 1: [], 2: [] }, scoutUsed: false, scoutArea: null };
+  return { ...standardGame(), kind: 'fog', probes: {}, retrySpot: null, revealed: { 1: [], 2: [] }, taunted: { 1: [], 2: [] }, scoutUsed: false, scoutArea: null };
 }
 
 export function visibility(game, color) {
   const visible = Array(SIZE * SIZE).fill(game.status === 'finished');
   if (color !== 1 && color !== 2) return visible;
   for (const index of game.revealed[color]) visible[index] = true;
+  for (const index of game.taunted[3-color]) visible[index] = true;
   if (color === 2 && game.scoutArea && game.turn === 2) {
     const {x,y} = game.scoutArea;
     for (let dy=-2;dy<=2;dy++) for (let dx=-2;dx<=2;dx++) {
@@ -24,6 +25,16 @@ export function visibility(game, color) {
     }
   });
   return visible;
+}
+
+export function taunt(game, color, x, y) {
+  if (game.status !== 'playing') throw new Error('本局已结束');
+  if ((color !== 1 && color !== 2) || game.turn !== color) throw new Error('请在自己的回合亮子');
+  if (!Number.isInteger(x) || !Number.isInteger(y) || x<0 || y<0 || x>=SIZE || y>=SIZE) throw new Error('请选择棋盘内的己方棋子');
+  const index = y*SIZE+x;
+  if (game.board[index] !== color) throw new Error('只能选择自己的棋子亮出');
+  if (game.taunted[color].includes(index)) throw new Error('这颗棋子已经亮出');
+  game.taunted[color].push(index);
 }
 
 export function scout(game, color, x, y) {
@@ -74,6 +85,7 @@ export function undoMove(game, color) {
   if (index < 0) throw new Error('你还没有落子，暂时不能悔棋');
   const removed = game.moves.splice(index);
   for (const move of removed) if (!move.blocked) game.board[move.y * SIZE + move.x] = 0;
+  for (const c of [1,2]) game.taunted[c] = game.taunted[c].filter(i => game.board[i] === c);
   game.turn = color; game.winner = 0; game.line = []; game.reason = ''; game.probes = {}; game.retrySpot = null; game.scoutArea = null;
   return removed.length;
 }
@@ -84,6 +96,7 @@ export function fogSnapshot(game, color, now = Date.now()) {
   const probe = game.probes[color];
   return {
     kind: 'fog', board: game.board.map((stone, i) => visible[i] ? stone : null), visibility: visible,
+    taunted: [...game.taunted[1], ...game.taunted[2]],
     turn: game.turn, status: game.status, winner: game.winner, reason: game.reason,
     retryUsed: !finished && color === game.turn && Boolean(game.retrySpot),
     scoutAvailable: !finished && color === 2 && !game.scoutUsed,
