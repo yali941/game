@@ -12,10 +12,13 @@ let lastMoveCount = 0, confirmAction = null;
 let renderedStoneKey = '', lastRankedGame = '';
 let tentative = null, boardSnapshot = null, stoneDrop = null, stoneDropTimer;
 let roomUI;
+let variant = new URLSearchParams(location.search).get('mode') === 'fog' ? 'fog' : 'standard';
+let probeKey = '', probeDeadline = 0, probeTimer, lastFogKey = '';
+const isFog = () => mode === 'online' && (room ? room.game.kind === 'fog' : variant === 'fog');
 let lastNoticeId = null, nextReactionAt = 0, reactionTimer, feedbackTimer;
 const reactions = { poop: { emoji: '💩', label: '扔了一个大便', impact: '💩' }, heart: { emoji: '❤️', label: '送来一颗爱心', impact: '💕' }, bomb: { emoji: '💣', label: '扔了一颗炸弹', impact: '💥' }, cry:{emoji:'😭',label:'发来哭哭脸',impact:'😭'} };
 const cells = [], labels = 'ABCDEFGHJKLMNOP';
-const game = () => mode === 'online' ? room?.game || newGame() : localGame;
+const game = () => mode === 'online' ? room?.game || (isFog() ? { ...newGame(), kind:'fog', board:Array(225).fill(null), visibility:Array(225).fill(false) } : newGame()) : localGame;
 const myColor = () => mode === 'online' ? room?.yourColor : mode === 'ai' ? 1 : localGame.turn;
 const bothOnline = () => room?.players.every(p => (p?.connected||p?.auto) && !p.gone);
 const autoPlaying = () => mode==='local' ? roomUI?.isAuto(localGame.turn,localGame) : mode==='online' ? room?.players.find(p=>p?.color===myColor())?.auto : false;
@@ -62,9 +65,10 @@ function soundMove() {
   } catch { /* Audio is optional. */ }
 }
 async function api(action, data = {}) {
-  const response = await fetch(`/api/${action}`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...profileHeaders(), ...(session ? { Authorization: `Bearer ${session.token}` } : {}) }, body: JSON.stringify({ room: session?.room, ...data }), signal: AbortSignal.timeout(10000) });
+  const response = await fetch(`/api/${action}`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...profileHeaders(), ...(session ? { Authorization: `Bearer ${session.token}` } : {}) }, body: JSON.stringify({ room: session?.room, version: room?.version, ...data }), signal: AbortSignal.timeout(10000) });
   const value = await response.json();
   if (!response.ok) { const error = new Error(value.error || '操作失败，请重试'); error.status = response.status; throw error; }
+  if (value.game && session?.room === value.code) applyRoom(value);
   return value;
 }
 function friendly(error) { return error.name === 'TimeoutError' || error.name === 'TypeError' ? '暂时连接不上服务器，请检查网络后重试。' : error.message; }
@@ -75,6 +79,14 @@ async function action(fn) {
   finally { pending = false; render(); }
 }
 function applyRoom(next, silent = false) {
+  if (room?.code === next.code && (next.seq || 0) < (room.seq || 0)) return;
+  const p = next.game.probe;
+  const key = p ? `${next.code}:${next.round}:${p.expiresAt}:${p.x}:${p.y}` : '';
+  if (key !== probeKey) {
+    clearTimeout(probeTimer); probeKey = key; probeDeadline = p ? performance.now() + p.remainingMs : 0;
+    if (p) { probeTimer = setTimeout(render, p.remainingMs + 20); if (!silent) toast('撞到隐藏棋子了！短暂显形，本回合结束。'); }
+  }
+  if (next.game.kind === 'fog') variant = 'fog'; else variant = 'standard';
   if (!silent && next.game.moves.length > lastMoveCount) soundMove();
   if (!silent && next.notice && next.notice.id !== lastNoticeId) toast(next.notice.text);
   lastNoticeId = next.notice?.id || null;
@@ -98,12 +110,12 @@ function connect() {
 }
 function enter(value) {
   session = { room: value.code, token: value.token }; persist();
-  applyRoom(value, true); history.replaceState(null, '', `?room=${value.code}`); connect(); render();
+  applyRoom(value, true); history.replaceState(null, '', `?${value.game.kind === 'fog' ? 'mode=fog&' : ''}room=${value.code}`); connect(); render();
 }
 function clearRoom() {
   stream?.close(); stream = null; session = null; room = null; transport = false; lastMoveCount = 0;
   lastNoticeId = null; resetReactions();
-  persist(); history.replaceState(null, '', location.pathname);
+  persist(); history.replaceState(null, '', location.pathname + (variant === 'fog' ? '?mode=fog' : ''));
 }
 
 function resetReactions() {
@@ -167,7 +179,12 @@ function setupBoard() {
     board.append(element('text', { x: pos, y: 22, 'text-anchor': 'middle', class: 'board-coordinate' }, labels[n]), element('text', { x: 19, y: pos + 3, 'text-anchor': 'middle', class: 'board-coordinate' }, String(15 - n)));
   }
   for (const [x, y] of [[3, 3], [11, 3], [7, 7], [3, 11], [11, 11]]) board.append(element('circle', { cx: 40 + x * 40, cy: 40 + y * 40, r: 3.1, class: 'star-point' }));
-  board.append(element('g', { id: 'stones' }), element('g', { id: 'hover' }));
+  const mask = element('mask', { id:'fog-mask', maskUnits:'userSpaceOnUse', x:20, y:20, width:600, height:600 });
+  mask.append(element('rect', { x:20,y:20,width:600,height:600,fill:'white' }), element('g', { id:'fog-windows' })); defs.append(mask);
+  board.append(element('g', { id:'fog-layer', 'aria-hidden':'true' }));
+  $('fog-layer').append(element('rect', { x:20,y:20,width:600,height:600,rx:12,fill:'#b5c2b6',opacity:'.86',mask:'url(#fog-mask)' }));
+  board.insertBefore($('fog-layer'), defs.nextSibling);
+  board.append(element('g', { id: 'stones' }), element('g', { id:'fog-probe', 'aria-hidden':'true' }), element('g', { id: 'hover' }));
   for (let y = 0; y < SIZE; y++) for (let x = 0; x < SIZE; x++) {
     const cell = element('circle', { cx: 40 + x * 40, cy: 40 + y * 40, r: 19.8, class: 'intersection', role: 'button', tabindex: x === 7 && y === 7 ? '0' : '-1', 'aria-label': `${labels[x]}${15 - y}，空位` });
     cell.addEventListener('click', () => move(x, y));
@@ -206,24 +223,42 @@ function syncBoardInteraction() {
     tentative = null; hover = null;
     clearTimeout(stoneDropTimer); stoneDrop = null;
     if (!before || before.scope !== scope) renderedStoneKey = '';
-    if (before?.scope === scope && g.moves.length === before.count + 1 && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    if (before?.scope === scope && g.moves.length === before.count + 1 && Number.isInteger(g.moves.at(-1)?.x) && !g.moves.at(-1).blocked && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
       stoneDrop = g.moves.at(-1);
       stoneDropTimer = setTimeout(() => { stoneDrop = null; render(); }, 520);
     }
   }
   if (!canPlay()) tentative = null;
 }
+function renderFog(g) {
+  const fog = isFog();
+  $('fog-layer').setAttribute('visibility', fog && g.status !== 'finished' ? 'visible' : 'hidden');
+  const key = JSON.stringify(g.visibility || []);
+  if (key !== lastFogKey) {
+    lastFogKey = key; $('fog-windows').replaceChildren();
+    (g.visibility || []).forEach((visible, i) => {
+      if (visible) $('fog-windows').append(element('rect', { x:20+(i%SIZE)*40,y:20+Math.floor(i/SIZE)*40,width:40.5,height:40.5,fill:'black' }));
+    });
+  }
+  $('fog-probe').replaceChildren();
+  const p = g.probe;
+  if (fog && g.status === 'playing' && p && performance.now() < probeDeadline) {
+    $('fog-probe').append(element('circle', { cx:40+p.x*40,cy:40+p.y*40,r:16.5,fill:p.color===1?'url(#black-stone)':'url(#white-stone)',class:'fog-probe-stone' }), element('circle', { cx:40+p.x*40,cy:40+p.y*40,r:21,class:'fog-probe-ring' }));
+  }
+}
 function renderBoard() {
   const g = game(), stones = $('stones');
+  renderFog(g);
   const stoneKey = JSON.stringify([g.board, g.line, g.moves.at(-1)]);
   const redraw = stoneKey !== renderedStoneKey;
   if (redraw) { stones.replaceChildren(); renderedStoneKey = stoneKey; }
-  const last = g.moves.at(-1);
+  const recent = g.moves.at(-1);
+  const last = Number.isInteger(recent?.x) && !recent.blocked ? recent : null;
   const pulseLine = [...g.line].sort((a, b) => Math.max(Math.abs(a[0] - last.x), Math.abs(a[1] - last.y)) - Math.max(Math.abs(b[0] - last.x), Math.abs(b[1] - last.y)));
   g.board.forEach((color, index) => {
     const x = index % SIZE, y = Math.floor(index / SIZE);
     const chosen = tentative?.[0] === x && tentative?.[1] === y;
-    cells[index].setAttribute('aria-label', `${labels[x]}${15 - y}，${color ? color === 1 ? '黑棋' : '白棋' : chosen ? '已预选，再点一次落子' : '空位'}`);
+    cells[index].setAttribute('aria-label', `${labels[x]}${15 - y}，${color ? color === 1 ? '黑棋' : '白棋' : chosen ? '已预选，再点一次落子' : color === null ? '迷雾，未知点位' : '空位'}`);
     cells[index].setAttribute('aria-pressed', String(chosen));
     cells[index].setAttribute('aria-disabled', String(Boolean(color) || !canPlay()));
     if (color && redraw) {
@@ -241,19 +276,29 @@ function renderBoard() {
   if (last && redraw && !stoneDrop) stones.append(element('circle', { cx: 40 + last.x * 40, cy: 40 + last.y * 40, r: 3, class: 'last-point' }));
   $('board').classList.toggle('playable', canPlay());
   $('move-counter').replaceChildren(document.createTextNode('第 '), Object.assign(document.createElement('b'), { textContent: String(g.moves.length).padStart(2, '0') }), document.createTextNode(' 手'));
-  $('coordinate').textContent = last ? `最近落子 ${labels[last.x]}${15 - last.y}` : '黑先 · 白后';
+  $('coordinate').textContent = last ? `最近落子 ${labels[last.x]}${15 - last.y}` : recent ? recent.blocked ? '盲下撞子 · 本回合结束' : '对方在迷雾中行棋' : '黑先 · 白后';
   renderHover();
 }
 function render() {
   syncBoardInteraction();
   scheduleAiMove();
-  const local = mode !== 'online', ai = mode === 'ai', seated = local || Boolean(room), g = game();
+  const local = mode !== 'online', ai = mode === 'ai', seated = local || Boolean(room), g = game(), fog = isFog();
+  document.body.classList.toggle('fog-mode', fog);
+  $('standard-variant').setAttribute('aria-pressed', String(variant === 'standard'));
+  $('fog-variant').setAttribute('aria-pressed', String(variant === 'fog'));
+  $('standard-variant').disabled = pending; $('fog-variant').disabled = pending;
+  $('fog-lobby-note').hidden = !fog;
+  $('fog-note').hidden = !fog;
+  $('fog-note').textContent = g.status === 'finished' ? '雾已散开 · 全盘揭晓' : g.probe && performance.now() < probeDeadline ? '撞到隐藏棋子 · 短暂显形，本回合结束' : '迷雾五子棋 · 每子照亮周围八点（含斜角）· 盲下撞子消耗一回合';
+  const rank = document.querySelector('[data-rank-kind]'), rankKind = fog ? 'fog' : 'gomoku';
+  if (rank.dataset.rankKind !== rankKind) { rank.dataset.rankKind = rankKind; refreshRankings(); }
+  rank.querySelector('.section-number').textContent = fog ? '04 / 迷雾独立胜场榜' : '04 / 联机胜场榜';
   $('online-tab').classList.toggle('selected', !local); $('local-tab').classList.toggle('selected', mode === 'local'); $('ai-tab').classList.toggle('selected', ai);
   $('online-tab').setAttribute('aria-pressed', String(!local)); $('local-tab').setAttribute('aria-pressed', String(mode === 'local')); $('ai-tab').setAttribute('aria-pressed', String(ai));
   document.querySelector('.sidebar').classList.toggle('local-mode', local);
   $('lobby').hidden = local || Boolean(room); $('room-panel').hidden = !room || local;
   document.querySelector('.sidebar').classList.toggle('ai-mode', ai);
-  $('board-mode').textContent = ai ? '人机对弈' : local ? '同屏对弈' : room ? `棋室 ${room.code}` : '好友对弈';
+  $('board-mode').textContent = ai ? '人机对弈' : local ? '同屏对弈' : room ? `${fog ? '迷雾 · ' : ''}棋室 ${room.code}` : fog ? '迷雾五子棋 · 好友对弈' : '好友对弈';
   $('mode-dot').classList.toggle('active', local || transport);
   $('connection').textContent = ai ? 'AI 在线' : local ? '同屏' : !room ? '未入座' : transport ? '已连接' : '重连中';
   $('connection').classList.toggle('online', local || transport);
@@ -322,7 +367,7 @@ function render() {
   $('create-button').disabled = pending; $('join-button').disabled = pending;
   $('online-tab').disabled = pending; $('local-tab').disabled = pending; $('ai-tab').disabled = pending;
   renderBoard(); syncTabletop({ kind: 'gomoku', requestId: room?.request?.id });
-  roomUI?.sync({mode: ai ? 'local' : mode,allowAuto:!ai,localLabel:ai?'人机对弈':'同屏对弈',room,transport,game:g,busy:pending||Boolean(stoneDrop)||Boolean(aiTimer),team:n=>({name:ai?(n===1?'你 · 黑棋':'AI · 白棋'):(n===1?'黑棋':'白棋'),color:n===1?'black':'white'})});
+  roomUI?.sync({mode: ai ? 'local' : mode,allowAuto:!ai&&!fog,localLabel:ai?'人机对弈':'同屏对弈',room,transport,game:g,busy:pending||Boolean(stoneDrop)||Boolean(aiTimer),team:n=>({name:ai?(n===1?'你 · 黑棋':'AI · 白棋'):(n===1?'黑棋':'白棋'),color:n===1?'black':'white'})});
 }
 function move(x, y) {
   if (!canPlay()) return;
@@ -340,9 +385,10 @@ function switchMode(next) {
   else change();
 }
 
-$('create-button').addEventListener('click', () => action(async () => { await profileReady; enter(await api('create')); }));
+$('create-button').addEventListener('click', () => action(async () => { await profileReady; enter(await api('create', { mode:variant })); }));
 $('join-form').addEventListener('submit', event => { event.preventDefault(); const code = $('room-input').value.trim().toUpperCase(); if (!/^[A-Z2-9]{6}$/.test(code)) return toast('请输入 6 位房间码。'); action(async () => { await profileReady; enter(await api('join', { room: code })); }); });
 $('room-input').addEventListener('input', () => { $('room-input').value = $('room-input').value.replace(/[^a-zA-Z2-9]/g, '').toUpperCase(); });
+for (const [id, next] of [['standard-variant','standard'],['fog-variant','fog']]) $(id).addEventListener('click', () => { if (pending || room) return; variant = next; history.replaceState(null,'',location.pathname + (next === 'fog' ? '?mode=fog' : '')); render(); });
 $('online-tab').addEventListener('click', () => switchMode('online'));
 $('local-tab').addEventListener('click', () => switchMode('local'));
 $('ai-tab').addEventListener('click', () => switchMode('ai'));
@@ -359,7 +405,7 @@ $('confirm-cancel').addEventListener('click', () => $('confirm-dialog').close())
 $('confirm-ok').addEventListener('click', () => { $('confirm-dialog').close(); const fn = confirmAction; confirmAction = null; fn?.(); });
 $('sound-button').addEventListener('click', async () => { sound = !sound; $('sound-button').setAttribute('aria-pressed', String(sound)); $('sound-button').title = sound ? '关闭落子音效' : '开启落子音效'; $('sound-wave').setAttribute('d', sound ? 'M15 8c3 2 3 6 0 8m3-11c5 4 5 10 0 14' : 'm16 9 6 6m0-6-6 6'); if (sound) { soundMove(); await audioContext?.resume(); } });
 $('copy-button').addEventListener('click', async () => {
-  const invite = `${location.origin}/?room=${room.code}`;
+  const invite = `${location.origin}/gomoku?${isFog() ? 'mode=fog&' : ''}room=${room.code}`;
   if (location.hostname === 'localhost' || location.hostname === '127.0.0.1' || !navigator.clipboard) {
     $('share-note').textContent = location.hostname === 'localhost' || location.hostname === '127.0.0.1' ? '当前是本机地址。请先用启动窗口显示的局域网地址打开游戏，再把邀请链接发给同一 Wi-Fi 下的朋友。' : '长按或选中下方链接，复制给朋友。';
     $('share-url').value = invite; showBoardDialog($('share-dialog')); $('share-url').select();

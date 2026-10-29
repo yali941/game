@@ -20,7 +20,7 @@ function page(kind) {
     setTimeout(fn,ms){const id=++nextTimer;timers.set(id,{fn,at:clock+ms});return id;},clearTimeout:id=>timers.delete(id),
     matchMedia:()=>({matches:false}),showBoardDialog:el=>el.open=true,
     profileHeaders:()=>({}),profileReady:Promise.resolve(),refreshRankings(){},
-    fetch(){throw Error('Local AI sent an online request');},AbortSignal,console
+    fetch(){throw Error('Local AI sent an online request');},AbortSignal,console,URLSearchParams,location:{search:''}
   });
   let source=readFileSync(new URL('../public/'+(kind==='go'?'go-app.js':'app.js'),import.meta.url),'utf8').replace(/^import .*;\r?\n/gm,'');
   source=source.slice(0,source.lastIndexOf("setupTabletop('gomoku');"));

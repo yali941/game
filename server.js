@@ -6,13 +6,14 @@ import { networkInterfaces } from 'node:os';
 import { resolve } from 'node:path';
 import { newGame, playMove, resign, undoMove, agreeDraw } from './public/game.js';
 import * as goRules from './public/go-rules.js';
+import * as fogRules from './fog-rules.js';
 import { createTableService } from './tables.js';
 import { createRecords } from './records.js';
 import { identifyPlayer, publicPlayer, updateRoomProfile, addChat, setAuto, createAutoScheduler } from './room-tools.js';
 
 const publicDir = new URL('./public/', import.meta.url);
 const TYPES = { '/': ['index.html', 'text/html; charset=utf-8'], '/style.css': ['style.css', 'text/css; charset=utf-8'], '/app.js': ['app.js', 'text/javascript; charset=utf-8'], '/game.js': ['game.js', 'text/javascript; charset=utf-8'], '/favicon.svg': ['favicon.svg', 'image/svg+xml'] };
-for (const file of ['hall.html', 'table.html', 'table.css', 'table-app.js', 'table-rules.js', 'flight-path.js', 'profile.js', 'tabletop.css', 'tabletop-ui.js', 'animal-art.js', 'chat-ui.js', 'mobile-ui.js', 'auto-play.js', 'uno.html', 'uno.css', 'uno-app.js', 'uno-rules.js', 'uno-motion.js', 'oldmaid.html', 'oldmaid.css', 'oldmaid-app.js', 'oldmaid-rules.js', 'go.html', 'go-app.js', 'go-rules.js', 'go.css', 'cube.html', 'cube.css', 'cube-app.js', 'cube-rules.js']) TYPES[`/${file}`] = [file, file.endsWith('.js') ? 'text/javascript; charset=utf-8' : file.endsWith('.css') ? 'text/css; charset=utf-8' : 'text/html; charset=utf-8'];
+for (const file of ['hall.html', 'table.html', 'table.css', 'table-app.js', 'table-rules.js', 'flight-path.js', 'profile.js', 'tabletop.css', 'tabletop-ui.js', 'animal-art.js', 'chat-ui.js', 'mobile-ui.js', 'auto-play.js', 'uno.html', 'uno.css', 'uno-app.js', 'uno-rules.js', 'uno-motion.js', 'oldmaid.html', 'oldmaid.css', 'oldmaid-app.js', 'oldmaid-rules.js', 'go.html', 'go-app.js', 'go-rules.js', 'go.css', 'cube.html', 'cube.css', 'cube-app.js', 'cube-rules.js', 'fog.css']) TYPES[`/${file}`] = [file, file.endsWith('.js') ? 'text/javascript; charset=utf-8' : file.endsWith('.css') ? 'text/css; charset=utf-8' : 'text/html; charset=utf-8'];
 // Only the eight bundled tutorial images are exposed.
 for (let step = 0; step <= 7; step++) TYPES[`/cube-guide-${step}.png`] = [`cube-guide-${step}.png`, 'image/png'];
 TYPES['/go'] = TYPES['/go.html']; TYPES['/cube'] = TYPES['/cube.html']; TYPES['/gomoku'] = TYPES['/']; TYPES['/play'] = TYPES['/table.html'];
@@ -24,14 +25,14 @@ export function createGameServer(options = {}) {
   const rooms = new Map(), rates = new Map();
   const records = createRecords(options);
   const tables = createTableService({ ...options, records });
-  const rules=r=>r.game.kind==='go'?goRules:{newGame,playMove,resign,undoMove,agreeDraw};
+  const rules=r=>r.game.kind==='go'?goRules:r.game.kind==='fog'?fogRules:{newGame,playMove,resign,undoMove,agreeDraw};
   const connected = p => Boolean(p && !p.gone && p.streams.size);
-  const snapshot = (room, player) => ({ code: room.code, yourColor: player?.color, game: room.game.kind==='go'?goRules.goSnapshot(room.game):room.game, version:room.version||0, seq:room.seq||0, round: room.round, closed: room.closed, ready: room.ready, request: room.request, notice: room.notice, chat:room.chat||[], players: room.players.map(p => p ? { ...publicPlayer(p), color: p.color, connected: connected(p), gone: p.gone } : null) });
+  const snapshot = (room, player) => ({ code: room.code, yourColor: player?.color, game: room.game.kind==='go'?goRules.goSnapshot(room.game):room.game.kind==='fog'?fogRules.fogSnapshot(room.game,player?.color):room.game, version:room.version||0, seq:room.seq||0, round: room.round, closed: room.closed, ready: room.ready, request: room.request, notice: room.notice, chat:room.chat||[], players: room.players.map(p => p ? { ...publicPlayer(p), color: p.color, connected: connected(p), gone: p.gone } : null) });
   const availablePlayer = p => Boolean(p && !p.gone && (connected(p)||p.auto));
-  const auto = createAutoScheduler({delay:options.autoDelay,ready:r=>!r.closed && !r.request && r.game.status==='playing' && (r.game.kind!=='go'||r.game.phase==='play') && r.players.every(availablePlayer),execute:(r,p,m)=>{if(m.action==='pass')goRules.pass(r.game,p.color);else rules(r).playMove(r.game,p.color,m.x,m.y);r.version=(r.version||0)+1;},broadcast});
+  const auto = createAutoScheduler({delay:options.autoDelay,ready:r=>r.game.kind!=='fog' && !r.closed && !r.request && r.game.status==='playing' && (r.game.kind!=='go'||r.game.phase==='play') && r.players.every(availablePlayer),execute:(r,p,m)=>{if(m.action==='pass')goRules.pass(r.game,p.color);else rules(r).playMove(r.game,p.color,m.x,m.y);r.version=(r.version||0)+1;},broadcast});
   function notifyRoom(room, text) { room.notice = { id: randomBytes(8).toString('hex'), text }; }
   function broadcast(room) {
-    records.victory(room, room.game.kind==='go'?'go':'gomoku', p => p.color);
+    records.victory(room, room.game.kind==='go'?'go':room.game.kind==='fog'?'fog':'gomoku', p => p.color);
     room.seq=(room.seq||0)+1;
     if(room.game.kind==='go'&&room.game.phase==='scoring')room.players.filter(Boolean).forEach(p=>p.auto=false);
     room.updatedAt = Date.now();
@@ -96,11 +97,12 @@ export function createGameServer(options = {}) {
       }
       if (url.pathname.startsWith('/api/table/')) return await tables.handle(req, res, url, data);
       if (url.pathname === '/api/create') {
+        if (!isGo && data.mode !== undefined && !['standard','fog'].includes(data.mode)) throw new Error('未知的五子棋模式');
         if (rooms.size >= 500) throw new Error('房间暂时已满，请稍后再试');
         let id; do { id = code(); } while (rooms.has(id));
         const player = seat(1);
         identifyPlayer(player, records.lookup(req));
-        const room = { code: id, players: [player, null], game: isGo?goRules.newGame():newGame(), version:0, seq:0, round: 1, ready: [], request: null, notice: null, closed: false, updatedAt: now };
+        const room = { code: id, players: [player, null], game: isGo?goRules.newGame():data.mode==='fog'?fogRules.newGame():newGame(), version:0, seq:0, round: 1, ready: [], request: null, notice: null, closed: false, updatedAt: now };
         rooms.set(id, room);
         return json(res, 200, { token: player.token, ...snapshot(room, player) });
       }
@@ -128,7 +130,7 @@ export function createGameServer(options = {}) {
       }
       if (room.closed) throw new Error('房间已关闭，请创建新房间');
       if (url.pathname === '/api/chat') { addChat(room,player,data.text,player.color); broadcast(room); return json(res,200,{ok:true}); }
-      if (url.pathname === '/api/auto') { if(isGo&&room.game.phase==='scoring'&&data.enabled)throw new Error('数子阶段请手动确认死活');setAuto(player,data.enabled); broadcast(room); return json(res,200,snapshot(room,player)); }
+      if (url.pathname === '/api/auto') { if(room.game.kind==='fog')throw new Error('迷雾模式由双方亲自落子，暂不支持托管'); if(isGo&&room.game.phase==='scoring'&&data.enabled)throw new Error('数子阶段请手动确认死活');setAuto(player,data.enabled); broadcast(room); return json(res,200,snapshot(room,player)); }
       // A requester may cancel even if their opponent has disconnected.
       if (url.pathname === '/api/cancel-request') {
         if (!room.request || data.id !== room.request.id || room.request.from !== player.color) throw new Error('这条请求已失效或不属于你');
@@ -145,7 +147,7 @@ export function createGameServer(options = {}) {
         for (const p of room.players) for (const output of p.streams) output.write(`event: reaction\ndata: ${JSON.stringify(reaction)}\n\n`);
         return json(res, 200, { ok: true });
       }
-      if(isGo && ['/api/move','/api/pass','/api/dead','/api/confirm-score','/api/resume','/api/request','/api/respond','/api/resign'].includes(url.pathname) && data.version!==room.version)throw new Error('棋局已更新，请根据当前棋盘操作');
+      if((isGo || room.game.kind==='fog') && ['/api/move','/api/pass','/api/dead','/api/confirm-score','/api/resume','/api/request','/api/respond','/api/resign'].includes(url.pathname) && data.version!==room.version)throw new Error('棋局已更新，请根据当前棋盘操作');
       if(isGo && ['/api/pass','/api/dead','/api/confirm-score','/api/resume'].includes(url.pathname)){
         if(player.auto)throw new Error('请先取消托管');
         if(room.request)throw new Error('请先处理悔棋或求和请求');
