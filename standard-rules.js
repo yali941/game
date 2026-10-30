@@ -1,7 +1,8 @@
 import * as base from './public/game.js';
 
 // Online standard Gomoku only. Local/AI and fog keep their own turn rules.
-export const bonusColors = players => players.filter(p => p?.name?.includes('芽卫兵')).map(p => 3-p.color);
+const bonusKeywords = ['芽卫兵', '小郭', '起义', '造反'];
+export const bonusColors = players => players.filter(p => bonusKeywords.some(word => p?.name?.includes(word))).map(p => 3-p.color);
 export const newGame = () => ({...base.newGame(), bonus:null});
 
 export function playMove(game, color, x, y, eligible = []) {

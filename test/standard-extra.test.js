@@ -5,6 +5,16 @@ import * as rules from '../standard-rules.js';
 import {createGameServer} from '../server.js';
 
 test('optional extra move requires a choice, validates turns and ends after exactly one extra stone',()=>{
+  for (const word of ['芽卫兵','小郭','起义','造反']) for (const color of [1,2]) {
+    const eligible=rules.bonusColors([{name:`我是${word}123`,color},null,{}]);
+    assert.deepEqual(eligible,[3-color]);
+    const game=rules.newGame();game.turn=3-color;
+    rules.playMove(game,3-color,7,7,eligible);assert.equal(game.bonus,'choice');
+    rules.chooseBonus(game,3-color,true);rules.playMove(game,3-color,8,7,eligible);
+    assert.equal(game.turn,color);assert.equal(game.bonus,null);
+  }
+  assert.deepEqual(rules.bonusColors([{name:'小郭起义造反芽卫兵',color:2}]),[1],'multiple matches still grant one extra');
+  assert.deepEqual(rules.bonusColors([{name:'小 郭起 义造 反',color:2}]),[]);
   assert.deepEqual(rules.bonusColors([{name:'小芽卫兵123',color:2},null]),[1]);
   assert.deepEqual(rules.bonusColors([{name:'芽卫',color:2},{name:'普通',color:1}]),[]);
   assert.deepEqual(rules.bonusColors([{name:'芽卫兵',color:1},{name:'芽卫兵2',color:2}]),[2,1]);
@@ -63,7 +73,7 @@ async function fixture(t,options={}) {
 
 test('online choice is authenticated, synchronized, reconnectable and versioned; undo, rematch, rename and modes stay consistent',async t=>{
   const {api,connect,sync,call,base}=await fixture(t);
-  const pa=await api('profile',{name:'普通棋友'}),pb=await api('profile',{name:'小芽卫兵123'});
+  const pa=await api('profile',{name:'普通棋友'}),pb=await api('profile',{name:'小郭123'});
   const a=await api('create',{},null,pa.token),b=await api('join',{room:a.code},null,pb.token);
   const sa=await connect(a),sb=await connect(b);await sa.wait(s=>s.players.every(p=>p?.connected));
   const first=await call('move',a,{x:7,y:7});assert.equal(first.http,200);assert.equal(first.game.bonus,'choice');
@@ -89,7 +99,7 @@ test('online choice is authenticated, synchronized, reconnectable and versioned;
   assert.equal((await sync(a)).game.bonus,'choice','earned opportunity survives nickname change');
   await call('bonus',a,{take:false});await call('move',b,{x:1,y:0});
   const ordinary=await call('move',a,{x:10,y:7,bonus:true});assert.equal(ordinary.game.bonus,null);assert.equal(ordinary.game.turn,2);
-  await api('profile',{name:'芽卫兵大王'},null,pb.token);
+  await api('profile',{name:'起义大王'},null,pb.token);
   await call('resign',b);await call('rematch',a);const rematch=await call('rematch',b);
   assert.equal(rematch.yourColor,1);assert.equal(rematch.game.bonus,null);
   await call('move',b,{x:0,y:0});const white=await call('move',a,{x:7,y:7});assert.equal(white.game.turn,2);assert.equal(white.game.bonus,'choice');
@@ -102,7 +112,7 @@ test('online choice is authenticated, synchronized, reconnectable and versioned;
 
 test('autoplay skips optional extras and does not get stuck at a pending choice',async t=>{
   const {api,connect,call}=await fixture(t,{autoDelay:10});
-  const named=await api('profile',{name:'芽卫兵'});
+  const named=await api('profile',{name:'我要造反'});
   const a=await api('create'),b=await api('join',{room:a.code},null,named.token);
   const sa=await connect(a);await connect(b);await sa.wait(s=>s.players.every(p=>p?.connected));
   await call('auto',a,{enabled:true});const autoFirst=await sa.wait(s=>s.game.moves.length===1);assert.equal(autoFirst.game.turn,2);assert.equal(autoFirst.game.bonus,null);
