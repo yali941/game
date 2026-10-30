@@ -361,7 +361,7 @@ function render() {
       detail = canPlay() ? '点一下选位，再点同一处落子。' : ai && g.turn === 2 ? 'AI 正在寻找成五或拦截的位置。' : '没有倒计时，慢慢想就好。'; symbol = g.turn === 1 ? '●' : '○';
       if (!local && !fog && g.bonus) {
         title = g.turn !== myColor() ? '对手还有一次可选落子' : g.bonus === 'choice' ? '要再下一颗吗？' : '额外落子 · 再下一颗';
-        detail = g.turn !== myColor() ? '等待对手落子或结束回合。' : g.bonus === 'choice' ? '对手昵称符合加一步规则，本回合可额外下一颗，也可以直接结束回合。' : '仍然点两次确认落子；也可以点结束回合放弃。';
+        detail = g.turn !== myColor() ? '等待对手落子或结束回合。' : g.bonus === 'choice' ? '请选择继续落子或结束回合。' : '仍然点两次确认落子；也可以点结束回合放弃。';
       }
     }
   }
