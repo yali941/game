@@ -359,9 +359,9 @@ function render() {
     else {
       title = ai ? (g.turn === 1 ? '轮到你落子' : 'AI 正在思考') : local ? `轮到${g.turn === 1 ? '黑棋' : '白棋'}落子` : g.turn === myColor() ? '轮到你落子' : '等对手落子';
       detail = canPlay() ? '点一下选位，再点同一处落子。' : ai && g.turn === 2 ? 'AI 正在寻找成五或拦截的位置。' : '没有倒计时，慢慢想就好。'; symbol = g.turn === 1 ? '●' : '○';
-      if (!local && !fog && g.bonus) {
-        title = g.turn !== myColor() ? '对手还有一次可选落子' : g.bonus === 'choice' ? '要再下一颗吗？' : '额外落子 · 再下一颗';
-        detail = g.turn !== myColor() ? '等待对手落子或结束回合。' : g.bonus === 'choice' ? '请选择继续落子或结束回合。' : '仍然点两次确认落子；也可以点结束回合放弃。';
+      if (!local && !fog && g.bonus && g.turn === myColor()) {
+        title = g.bonus === 'choice' ? '要再下一颗吗？' : '额外落子 · 再下一颗';
+        detail = g.bonus === 'choice' ? '请选择继续落子或结束回合。' : '仍然点两次确认落子；也可以点结束回合放弃。';
       }
     }
   }
@@ -383,9 +383,9 @@ function render() {
   const readyForAction = seated && !pending && !stoneDrop && (local || (transport && bothOnline() && !room.closed));
   const request = local ? null : room?.request;
   const ownRequest = request?.from === myColor();
-  const bonusVisible = !local && !fog && Boolean(g.bonus) && g.status === 'playing' && !room?.closed;
+  const bonusVisible = !local && !fog && Boolean(g.bonus) && g.turn === myColor() && g.status === 'playing' && !room?.closed;
   $('bonus-actions').hidden = !bonusVisible;
-  $('bonus-message').textContent = g.turn !== myColor() ? '等待对手选择额外落子或结束回合' : g.bonus === 'choice' ? '本回合还可以多下一颗，你来决定。' : '额外落子：在棋盘上点两次确认。';
+  $('bonus-message').textContent = !bonusVisible ? '' : g.bonus === 'choice' ? '本回合还可以多下一颗，你来决定。' : '额外落子：在棋盘上点两次确认。';
   $('bonus-take').hidden = g.turn !== myColor() || g.bonus !== 'choice';
   $('bonus-end').hidden = g.turn !== myColor();
   $('bonus-take').disabled = $('bonus-end').disabled = !readyForAction || Boolean(request) || autoPlaying();
@@ -407,7 +407,7 @@ function render() {
     $('request-detail').textContent = request.kind === 'undo' ? `同意后撤回${g.moves.at(-1)?.color === request.from ? '最近一手' : '双方最近各一手'}，由${request.from === 1 ? '黑棋' : '白棋'}重下。` : '同意后以和棋结束本局。';
     if (!fog && !local && request.kind === 'undo') {
       const index = g.moves.findLastIndex(move=>move.color===request.from);
-      $('request-detail').textContent = `同意后撤回 ${g.moves.length-index} 颗棋子，由${request.from===1?'黑棋':'白棋'}重下。${g.moves[index]?.bonusMove?'只恢复额外的一步，不重新获得两步。':''}`;
+      $('request-detail').textContent = `同意后撤回 ${g.moves.length-index} 颗棋子，由${request.from===1?'黑棋':'白棋'}重下。${ownRequest && g.moves[index]?.bonusMove?'只恢复额外的一步，不重新获得两步。':''}`;
     }
     $('request-accept').hidden = ownRequest; $('request-reject').hidden = ownRequest; $('request-cancel').hidden = !ownRequest;
     $('request-accept').disabled = !readyForAction; $('request-reject').disabled = !readyForAction;
