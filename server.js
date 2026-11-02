@@ -27,7 +27,7 @@ export function createGameServer(options = {}) {
   const tables = createTableService({ ...options, records });
   const rules=r=>r.game.kind==='go'?goRules:r.game.kind==='fog'?fogRules:standardRules;
   const connected = p => Boolean(p && !p.gone && p.streams.size);
-  const snapshot = (room, player) => ({ code: room.code, yourColor: player?.color, game: room.game.kind==='go'?goRules.goSnapshot(room.game):room.game.kind==='fog'?fogRules.fogSnapshot(room.game,player?.color,Date.now(),fogRules.publicStoneColors(room.players)):room.game, version:room.version||0, seq:room.seq||0, round: room.round, closed: room.closed, ready: room.ready, request: room.request, notice: room.notice, chat:room.chat||[], players: room.players.map(p => p ? { ...publicPlayer(p), color: p.color, connected: connected(p), gone: p.gone } : null) });
+  const snapshot = (room, player) => ({ code: room.code, yourColor: player?.color, game: room.game.kind==='go'?goRules.goSnapshot(room.game):room.game.kind==='fog'?fogRules.fogSnapshot(room.game,player?.color,Date.now(),fogRules.publicStoneColors(room.players)):standardRules.standardSnapshot(room.game,player?.color), version:room.version||0, seq:room.seq||0, round: room.round, closed: room.closed, ready: room.ready, request: room.request ? {...room.request, moveCount: !room.game.kind && room.game.pendingTurn?.color !== player?.color ? room.game.pendingTurn?.start ?? room.request.moveCount : room.request.moveCount} : null, notice: room.notice, chat:room.chat||[], players: room.players.map(p => p ? { ...publicPlayer(p), color: p.color, connected: connected(p), gone: p.gone } : null) });
   const availablePlayer = p => Boolean(p && !p.gone && (connected(p)||p.auto));
   const auto = createAutoScheduler({delay:options.autoDelay,ready:r=>r.game.kind!=='fog' && !r.closed && !r.request && r.game.status==='playing' && (r.game.kind!=='go'||r.game.phase==='play') && r.players.every(availablePlayer),execute:(r,p,m)=>{
     if(!r.game.kind && r.game.bonus) standardRules.chooseBonus(r.game,p.color,false);
@@ -143,7 +143,7 @@ export function createGameServer(options = {}) {
       }
       if (room.closed) throw new Error('房间已关闭，请创建新房间');
       if (url.pathname === '/api/chat') { addChat(room,player,data.text,player.color); broadcast(room); return json(res,200,{ok:true}); }
-      if (url.pathname === '/api/auto') { if(room.game.kind==='fog')throw new Error('迷雾模式由双方亲自落子，暂不支持托管'); if(isGo&&room.game.phase==='scoring'&&data.enabled)throw new Error('数子阶段请手动确认死活');setAuto(player,data.enabled); broadcast(room); return json(res,200,snapshot(room,player)); }
+      if (url.pathname === '/api/auto') { if(!room.game.kind && room.game.pendingTurn?.color===player.color && data.enabled)throw new Error('请先点击结束回合，再开启托管'); if(room.game.kind==='fog')throw new Error('迷雾模式由双方亲自落子，暂不支持托管'); if(isGo&&room.game.phase==='scoring'&&data.enabled)throw new Error('数子阶段请手动确认死活');setAuto(player,data.enabled); broadcast(room); return json(res,200,snapshot(room,player)); }
       // A requester may cancel even if their opponent has disconnected.
       if (url.pathname === '/api/cancel-request') {
         if (!room.request || data.id !== room.request.id || room.request.from !== player.color) throw new Error('这条请求已失效或不属于你');
@@ -181,6 +181,7 @@ export function createGameServer(options = {}) {
       } else if (url.pathname === '/api/request') {
         if (room.game.status !== 'playing') throw new Error('本局已结束');
         if (room.request) throw new Error('请先处理当前请求');
+        if (data.kind === 'undo' && !room.game.kind && room.game.pendingTurn) throw new Error('请等待当前回合结束后再申请悔棋');
         if (!['undo', 'draw'].includes(data.kind)) throw new Error('无效的请求类型');
         if(isGo&&room.game.phase!=='play')throw new Error('请先完成数子，或继续对局');
         if (data.kind === 'undo' && !room.game.moves.some(move => move.color === player.color)) throw new Error('你还没有落子，暂时不能悔棋');

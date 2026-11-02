@@ -23,7 +23,7 @@ const game = () => mode === 'online' ? room?.game || (isFog() ? { ...newGame(), 
 const myColor = () => mode === 'online' ? room?.yourColor : mode === 'ai' ? 1 : localGame.turn;
 const bothOnline = () => room?.players.every(p => (p?.connected||p?.auto) && !p.gone);
 const autoPlaying = () => mode==='local' ? roomUI?.isAuto(localGame.turn,localGame) : mode==='online' ? room?.players.find(p=>p?.color===myColor())?.auto : false;
-const canPlay = () => !pending && !stoneDrop && !aiTimer && !autoPlaying() && game().bonus !== 'choice' && game().status === 'playing' && (mode !== 'online' ? mode === 'local' || game().turn === 1 : (transport && room && !room.closed && !room.request && bothOnline() && game().turn === myColor()));
+const canPlay = () => !pending && !stoneDrop && !aiTimer && !autoPlaying() && !['choice','confirm'].includes(game().bonus) && game().status === 'playing' && (mode !== 'online' ? mode === 'local' || game().turn === 1 : (transport && room && !room.closed && !room.request && bothOnline() && game().turn === myColor()));
 
 function scheduleAiMove() {
   if (mode !== 'ai' || pending || stoneDrop || document.querySelector('dialog[open]') || localGame.status !== 'playing' || localGame.turn !== 2) { clearTimeout(aiTimer); aiTimer = null; return; }
@@ -234,13 +234,13 @@ function syncBoardInteraction() {
   const g = game(), scope = mode !== 'online' ? localGame : room ? room.code + ':' + room.round : 'lobby';
   const signature = JSON.stringify([g.board, g.turn, g.status, g.bonus]);
   const before = boardSnapshot;
-  boardSnapshot = { scope, signature, count:g.moves.length };
+  boardSnapshot = { scope, signature, count:g.moves.length, board:[...g.board] };
   if (!before || before.scope !== scope || before.signature !== signature) {
     tentative = null; hover = null;
     clearTimeout(stoneDropTimer); stoneDrop = null;
     if (!before || before.scope !== scope) renderedStoneKey = '';
-    if (before?.scope === scope && g.moves.length === before.count + 1 && Number.isInteger(g.moves.at(-1)?.x) && !g.moves.at(-1).blocked && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      stoneDrop = g.moves.at(-1);
+    if (before?.scope === scope && g.moves.length > before.count && g.moves.length <= before.count + 2 && g.moves.slice(before.count).every(m=>Number.isInteger(m.x) && !m.blocked && !before.board[m.y*SIZE+m.x]) && before.board.every((c,i)=>!c || g.board[i]===c) && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      stoneDrop = g.moves.slice(before.count);
       stoneDropTimer = setTimeout(() => { stoneDrop = null; render(); }, 520);
     }
   }
@@ -292,10 +292,10 @@ function renderBoard() {
       const order = pulseLine.findIndex(p => p[0] === x && p[1] === y);
       const stone = element('circle', { cx: 40 + x * 40, cy: 40 + y * 40, r: 16.5, fill: `url(#${color === 1 ? 'black' : 'white'}-stone)`, stroke: color === 2 ? '#d9ddcf' : '#252e26', 'stroke-width': '.7', class: `game-stone${order >= 0 ? ' winning-stone' : ''}`, ...(order >= 0 ? { 'data-pulse-order': order } : {}) });
       if (order >= 0 && stoneDrop) stone.style.setProperty('animation-delay', (520 + order*140)+'ms', 'important');
-      if (stoneDrop?.x === x && stoneDrop?.y === y) {
+      if (stoneDrop?.some(move=>move.x === x && move.y === y)) {
         stones.append(element('ellipse', { cx:40+x*40,cy:44+y*40,rx:17,ry:7,class:'stone-drop-shadow' }));
         const falling = element('g', { class:'stone-drop', 'data-drop-coordinate':labels[x]+(15-y) });
-        falling.append(stone, element('circle', { cx:40+x*40,cy:40+y*40,r:3,class:'last-point' })); stones.append(falling);
+        falling.append(stone); if (last?.x===x && last?.y===y) falling.append(element('circle', { cx:40+x*40,cy:40+y*40,r:3,class:'last-point' })); stones.append(falling);
       } else stones.append(stone);
       if (g.taunted?.includes(index)) stones.append(element('circle',{cx:40+x*40,cy:40+y*40,r:21,class:'taunt-ring'}));
     }
@@ -360,8 +360,8 @@ function render() {
       title = ai ? (g.turn === 1 ? '轮到你落子' : 'AI 正在思考') : local ? `轮到${g.turn === 1 ? '黑棋' : '白棋'}落子` : g.turn === myColor() ? '轮到你落子' : '等对手落子';
       detail = canPlay() ? '点一下选位，再点同一处落子。' : ai && g.turn === 2 ? 'AI 正在寻找成五或拦截的位置。' : '没有倒计时，慢慢想就好。'; symbol = g.turn === 1 ? '●' : '○';
       if (!local && !fog && g.bonus && g.turn === myColor()) {
-        title = g.bonus === 'choice' ? '要再下一颗吗？' : '额外落子 · 再下一颗';
-        detail = g.bonus === 'choice' ? '请选择继续落子或结束回合。' : '仍然点两次确认落子；也可以点结束回合放弃。';
+        title = g.bonus === 'confirm' ? '落子已选好 · 请结束回合' : g.bonus === 'choice' ? '要再下一颗吗？' : '额外落子 · 再下一颗';
+        detail = '本回合棋子仅你可见，点击结束回合后一起公开。';
       }
     }
   }
@@ -385,12 +385,12 @@ function render() {
   const ownRequest = request?.from === myColor();
   const bonusVisible = !local && !fog && Boolean(g.bonus) && g.turn === myColor() && g.status === 'playing' && !room?.closed;
   $('bonus-actions').hidden = !bonusVisible;
-  $('bonus-message').textContent = !bonusVisible ? '' : g.bonus === 'choice' ? '本回合还可以多下一颗，你来决定。' : '额外落子：在棋盘上点两次确认。';
+  $('bonus-message').textContent = !bonusVisible ? '' : g.bonus === 'confirm' ? '点击结束回合，将本回合棋子一起落到对方棋盘。' : g.bonus === 'choice' ? '可以再下一颗，也可以结束回合公开这一颗。' : '再下一颗后，点击结束回合一起公开。';
   $('bonus-take').hidden = g.turn !== myColor() || g.bonus !== 'choice';
   $('bonus-end').hidden = g.turn !== myColor();
   $('bonus-take').disabled = $('bonus-end').disabled = !readyForAction || Boolean(request) || autoPlaying();
   $('negotiation-buttons').hidden = !seated || g.status !== 'playing' || Boolean(room?.closed);
-  $('undo-button').disabled = !readyForAction || Boolean(request) || !(local ? g.moves.length : g.moves.some(move => move.color === myColor()));
+  $('undo-button').disabled = !readyForAction || Boolean(request) || bonusVisible || !(local ? g.moves.length : g.moves.some(move => move.color === myColor()));
   $('draw-button').disabled = !readyForAction || Boolean(request);
   $('taunt-button').hidden = !fog;
   $('taunt-button').disabled = !canPlay() || !g.board.some((c,i)=>c===myColor() && !g.taunted?.includes(i));
