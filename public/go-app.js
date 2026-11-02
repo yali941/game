@@ -1,3 +1,4 @@
+import {syncOwnerControls} from './owner-ui.js';
 import { SIZE, newGame, playMove, resign, undoMove, agreeDraw, pass, toggleDead, confirmScore, resume } from './go-rules.js';
 import { profileReady, profileHeaders, refreshRankings } from './profile.js';
 import { setupTabletop, showBoardDialog, syncTabletop } from './tabletop-ui.js';
@@ -344,6 +345,7 @@ function render() {
   $('online-tab').disabled = pending; $('local-tab').disabled = pending; $('ai-tab').disabled = pending;
   renderGoControls();
   renderBoard(); syncTabletop({ kind: 'gomoku', requestId: room?.request?.id });
+  syncOwnerControls({room,session,kind:'go',online:mode==='online',busy:pending||!transport,refresh:render,resync:async()=>applyRoom(await api('sync'))});
   roomUI?.sync({mode: ai ? 'local' : mode,allowAuto:!ai,localLabel:ai?'人机对弈':'同屏对弈',room,transport,game:g,busy:pending||Boolean(stoneDrop)||Boolean(aiTimer),team:n=>({name:ai?(n===1?'你 · 黑棋':'AI · 白棋'):(n===1?'黑棋':'白棋'),color:n===1?'black':'white'})});
 }
 function move(x, y) {

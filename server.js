@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { networkInterfaces } from 'node:os';
 import { resolve } from 'node:path';
 import * as standardRules from './standard-rules.js';
+import {createOwnerAccess} from './owner-access.js';
 import * as goRules from './public/go-rules.js';
 import * as fogRules from './fog-rules.js';
 import { createTableService } from './tables.js';
@@ -18,13 +19,16 @@ for (const file of ['hall.html', 'table.html', 'table.css', 'table-app.js', 'tab
 for (let step = 0; step <= 7; step++) TYPES[`/cube-guide-${step}.png`] = [`cube-guide-${step}.png`, 'image/png'];
 TYPES['/go'] = TYPES['/go.html']; TYPES['/cube'] = TYPES['/cube.html']; TYPES['/gomoku'] = TYPES['/']; TYPES['/play'] = TYPES['/table.html'];
 const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+for (const file of ['owner.html','owner-login.js','owner-ui.js','owner.css']) TYPES['/'+file]=[file,file.endsWith('.js')?'text/javascript; charset=utf-8':file.endsWith('.css')?'text/css; charset=utf-8':'text/html; charset=utf-8'];
+TYPES['/owner']=TYPES['/owner.html'];
 const code = () => Array.from(randomBytes(6), b => ALPHABET[b % ALPHABET.length]).join('');
 const seat = color => ({ color, token: randomBytes(32).toString('hex'), streams: new Set(), gone: false, nextReactionAt: 0 });
 
 export function createGameServer(options = {}) {
   const rooms = new Map(), rates = new Map();
   const records = createRecords(options);
-  const tables = createTableService({ ...options, records });
+  const owner = createOwnerAccess(options);
+  const tables = createTableService({ ...options, records, owner });
   const rules=r=>r.game.kind==='go'?goRules:r.game.kind==='fog'?fogRules:standardRules;
   const connected = p => Boolean(p && !p.gone && p.streams.size);
   const snapshot = (room, player) => ({ code: room.code, yourColor: player?.color, game: room.game.kind==='go'?goRules.goSnapshot(room.game):room.game.kind==='fog'?fogRules.fogSnapshot(room.game,player?.color,Date.now(),fogRules.publicStoneColors(room.players)):standardRules.standardSnapshot(room.game,player?.color), version:room.version||0, seq:room.seq||0, round: room.round, closed: room.closed, ready: room.ready, request: room.request ? {...room.request, moveCount: !room.game.kind && room.game.pendingTurn?.color !== player?.color ? room.game.pendingTurn?.start ?? room.request.moveCount : room.request.moveCount} : null, notice: room.notice, chat:room.chat||[], players: room.players.map(p => p ? { ...publicPlayer(p), color: p.color, connected: connected(p), gone: p.gone } : null) });
@@ -95,6 +99,47 @@ export function createGameServer(options = {}) {
       else if (++rate.count > 180) return json(res, 429, { error: '操作太频繁，请稍后重试' });
       const data = await body(req);
       if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('请求格式错误');
+      if (url.pathname.startsWith('/api/owner/')) {
+        const profile=records.lookup(req), identity={profileId:profile?.id};
+        if(url.pathname==='/api/owner/login') {owner.login(req,res,data.key,profile);return json(res,200,{ok:true});}
+        if(url.pathname==='/api/owner/logout') {owner.logout(req,res);return json(res,200,{ok:true});}
+        if(url.pathname==='/api/owner/status') return json(res,200,{active:owner.authorized(req,identity)});
+        if(url.pathname!=='/api/owner/action') return json(res,404,{error:'未知操作'});
+        owner.requireOwner(req,identity);
+        const target=(data.game==='flight'?tables.rooms:rooms).get(String(data.room||'').toUpperCase());
+        const actor=target?.players.find(p=>p && !p.gone && req.headers.authorization===`Bearer ${p.token}`);
+        if(!actor || actor.profileId!==profile.id) return json(res,403,{error:'只能操作自己入座的棋室'});
+        owner.requireOwner(req,actor);
+        const kind=target.kind || target.game.kind || 'gomoku', g=target.game;
+        if(kind!==data.game || !['gomoku','fog','flight','go'].includes(kind)) throw new Error('请选择对应玩法');
+        if(target.closed || g.status!=='playing') throw new Error('本局当前不可操作');
+        if(data.version!==target.version) throw new Error('棋局已更新，请重试');
+        if(data.op==='fog-view' && kind==='fog') return json(res,200,{board:[...g.board],version:target.version});
+        if(data.op==='go-legal' && kind==='go') {
+          const points=[];
+          if(g.turn===actor.color && g.phase==='play') for(let y=0;y<19;y++)for(let x=0;x<19;x++) {
+            try{goRules.simulateMove(g,actor.color,x,y);points.push([x,y]);}catch{/* Illegal points are omitted. */}
+          }
+          return json(res,200,{points,version:target.version});
+        }
+        if(target.request || actor.auto) throw new Error('请先处理请求并关闭托管');
+        if(!target.players.every(p=>p && !p.gone && (connected(p)||p.auto||p.bot))) throw new Error('等待双方连接后继续');
+        if(data.op==='extra' && kind==='gomoku') {
+          if(g.turn!==actor.color || g.bonus) throw new Error('请在自己回合的第一颗棋子落下前设置');
+          if(typeof data.enabled!=='boolean') throw new Error('请选择开启或关闭');
+          owner.arm(req,actor,target,'extra',data.enabled);return json(res,200,{ok:true});
+        }
+        if(data.op==='dice' && kind==='flight') {
+          if(!target.started || g.turn!==actor.seat || g.phase!=='roll') throw new Error('请在自己掷骰前设置');
+          if(!Number.isInteger(data.value)||data.value<0||data.value>6) throw new Error('请选择 1～6 点，或恢复随机');
+          owner.arm(req,actor,target,'dice',data.value);return json(res,200,{ok:true});
+        }
+        if(data.op==='go-undo' && kind==='go') {
+          if(g.phase!=='play' || g.moves.at(-1)?.color!==actor.color || g.moves.at(-1)?.resume) throw new Error('仅可在对手应手前撤回自己上一手');
+          goRules.undoMove(g,actor.color);target.version++;broadcast(target);return json(res,200,{ok:true});
+        }
+        throw new Error('不支持的私人操作');
+      }
       if (url.pathname === '/api/profile') {
         const profile=records.profile(req,data);
         for(const room of rooms.values()) {
@@ -202,7 +247,11 @@ export function createGameServer(options = {}) {
         if(player.auto) throw new Error('请先取消托管再手动落子');
         if (room.request) throw new Error('请先处理悔棋或求和请求');
         if(room.game.kind==='fog') fogRules.playMove(room.game,player.color,data.x,data.y,now,fogRules.publicStoneColors(room.players));
-        else if(!room.game.kind) standardRules.playMove(room.game,player.color,data.x,data.y,standardRules.bonusColors(room.players));
+        else if(!room.game.kind) {
+          const eligible=standardRules.bonusColors(room.players);
+          if(owner.peek(req,player,room,'extra')) eligible.push(player.color);
+          standardRules.playMove(room.game,player.color,data.x,data.y,eligible);owner.clear(req,player,room);
+        }
         else rules(room).playMove(room.game, player.color, data.x, data.y);
       } else if (url.pathname === '/api/resign') { rules(room).resign(room.game, player.color); room.request = null; }
       else if (url.pathname === '/api/rematch') {

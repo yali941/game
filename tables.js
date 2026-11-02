@@ -14,14 +14,14 @@ export function unluckyDice(ticket) {
   }
 }
 
-export function createTableService({ roll = () => randomInt(1, 7), records, autoDelay, unluckyName = '芽卫兵', luckTicket = () => randomInt(100) } = {}) {
+export function createTableService({ owner, roll = () => randomInt(1, 7), records, autoDelay, unluckyName = '芽卫兵', luckTicket = () => randomInt(100) } = {}) {
   const targetName = unluckyName.trim();
   const affected = p => Boolean(targetName && p?.name === targetName);
   const dicePolicy = r => r.kind === 'flight' && r.diceMode === 'unlucky' ? { mode: 'unlucky', name: targetName, weights: UNLUCKY_WEIGHTS, seats: r.players.filter(p => p && !p.gone && affected(p)).map(p => p.seat) } : null;
-  const throwDice = (r, p) => {
+  const throwDice = (r, p, forced) => {
     const unlucky = r.diceMode === 'unlucky' && affected(p);
-    rollFlight(r.game, p.seat, unlucky ? unluckyDice(luckTicket()) : roll());
-    if (unlucky) r.game.rollHistory.at(-1).luck = 'unlucky';
+    rollFlight(r.game, p.seat, forced || (unlucky ? unluckyDice(luckTicket()) : roll()));
+    if (unlucky && !forced) r.game.rollHistory.at(-1).luck = 'unlucky';
   };
   const rooms = new Map();
   const waitingUno=count=>({kind:'uno',count,hands:Array.from({length:count},()=>[]),deck:[],top:null,turn:0,direction:1,color:'',phase:'waiting',pending:null,bombs:[],status:'waiting',winner:0,moves:[],last:null,message:'至少两人入座即可开始，最多 8 人，开局前可继续邀请朋友。'});
@@ -160,8 +160,8 @@ export function createTableService({ roll = () => randomInt(1, 7), records, auto
     }
     else if (action === 'roll') {
       if (r.kind !== 'flight') throw new Error('斗兽棋不使用骰子');
-      // Clients never supply or influence the online dice result.
-      throwDice(r, p);
+      // Only a validated owner session can arm its own current roll.
+      throwDice(r, p, owner?.peek(req,p,r,'dice'));owner?.clear(req,p,r);
     } else if (action === 'move') {
       if(cardGame(r.kind)) throw new Error('请使用对应的抽牌或出牌操作');
       if (r.kind === 'flight') moveFlight(r.game, p.seat, data.id);

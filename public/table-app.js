@@ -1,3 +1,4 @@
+import {syncOwnerControls} from './owner-ui.js';
 import { ANIMALS, ANIMAL_ICONS, FLIGHT_COLORS, FLIGHT_PAINTS, newTableGame, jungleTargets, moveJungle, moveFlight, rollFlight, flightOptions, flightIndex, river, denOwner, trapOwner } from './table-rules.js';
 import { profileReady, profileHeaders, refreshRankings } from './profile.js';
 import { flightMotionSteps, sampleFlightLeg, flightHeading } from './flight-path.js';
@@ -475,6 +476,7 @@ function render() {
       item.textContent=`第 ${i+1} 名 · ${playerName(seat)}`;placements.append(item);
     }
   }
+  syncOwnerControls({room,session,kind:kind,online:mode!=='local',busy:pending||!transport,refresh:render,resync:async()=>apply(await api('sync'))});
   roomUI?.sync({mode: local ? 'local' : 'online',room,transport,game:g,busy:pending||Boolean(flightMotion)||Boolean(jungleMotion)||isDiceRolling(),team:n=>({name:playerName(n),color:['red','yellow','blue','green'][colorOf(n)]})});
 }
 
