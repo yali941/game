@@ -5,15 +5,19 @@ import * as rules from '../standard-rules.js';
 import {createGameServer} from '../server.js';
 
 test('optional extra move requires a choice, validates turns and ends after exactly one extra stone',()=>{
-  for (const word of ['芽卫兵','小郭','起义','造反']) for (const color of [1,2]) {
+  for (const word of ['芽卫兵','小郭','起义','造反','大王','9261','2202']) for (const color of [1,2]) {
     const eligible=rules.bonusColors([{name:`我是${word}123`,color},null,{}]);
     assert.deepEqual(eligible,[3-color]);
     const game=rules.newGame();game.turn=3-color;
     rules.playMove(game,3-color,7,7,eligible);assert.equal(game.bonus,'choice');
     rules.chooseBonus(game,3-color,true);rules.playMove(game,3-color,8,7,eligible);
     assert.equal(game.turn,color);assert.equal(game.bonus,null);
+    const skipped=rules.newGame();skipped.turn=3-color;
+    rules.playMove(skipped,3-color,7,7,eligible);rules.chooseBonus(skipped,3-color,false);
+    assert.equal(skipped.turn,color);assert.equal(skipped.moves.length,1);assert.equal(skipped.bonus,null);
   }
-  assert.deepEqual(rules.bonusColors([{name:'小郭起义造反芽卫兵',color:2}]),[1],'multiple matches still grant one extra');
+  assert.deepEqual(rules.bonusColors([{name:'小郭起义造反芽卫兵大王92612202',color:2}]),[1],'multiple matches still grant one extra');
+  assert.deepEqual(rules.bonusColors([{name:'大 王926220',color:2}]),[],'partial keywords do not match');
   assert.deepEqual(rules.bonusColors([{name:'小 郭起 义造 反',color:2}]),[]);
   assert.deepEqual(rules.bonusColors([{name:'小芽卫兵123',color:2},null]),[1]);
   assert.deepEqual(rules.bonusColors([{name:'芽卫',color:2},{name:'普通',color:1}]),[]);
