@@ -215,28 +215,7 @@ test('two real clients: private SSE/HTTP/reconnect, stale action rejection, nego
   const normal=await api('create');assert.ok(normal.game.board.every(p=>p===0));
 });
 
- test('named public stones expose no neighbouring points or opponent vision, and visible collisions do not consume retries', () => {
-  assert.deepEqual(fog.publicStoneColors([{name:'芽卫兵',color:1},null,{name:'小芽卫兵',color:2}]),[1,2]);
-  for(const name of ['芽卫兵123','小芽卫兵大王','芽卫兵']) assert.deepEqual(fog.publicStoneColors([{name,color:2}]),[2]);
-  for(const name of ['芽卫','芽 卫兵','芽卫冰','普通玩家']) assert.deepEqual(fog.publicStoneColors([{name,color:1},null,{}]),[]);
-  assert.deepEqual(fog.publicStoneColors([{name:'芽卫兵',color:1},{name:'芽卫兵',color:2}]),[1,2]);
-  for(const named of [1,2]) {
-    const g=fog.newGame();fog.playMove(g,1,0,0);fog.playMove(g,2,14,14);
-    const enemy=3-named, namedIndex=named===1?0:224, enemyIndex=named===1?224:0;
-    const own=fog.fogSnapshot(g,named,10000,[named]),seen=fog.fogSnapshot(g,enemy,10000,[named]);
-    assert.deepEqual(own,fog.fogSnapshot(g,named,10000),'named player retains normal fog snapshot');
-    assert.equal(own.board[enemyIndex],null);assert.equal(seen.board[namedIndex],named);
-    assert.equal(seen.visibility.filter(Boolean).length,5,'only the exposed point is added');
-    assert.equal(seen.board[namedIndex===0?1:223],null);
-    assert.deepEqual(seen.moves[named-1],g.moves[named-1]);
-    g.turn=enemy;
-    assert.throws(()=>fog.playMove(g,enemy,named===1?0:14,named===1?0:14,10000,[named]),/已经有棋子/);
-    assert.equal(g.turn,enemy);assert.equal(g.retrySpot,null);assert.equal(g.moves.length,2);
-    fog.undoMove(g,named);assert.notEqual(fog.fogSnapshot(g,enemy,10000,[named]).board[namedIndex],named);
-  }
-});
-
-test('named visibility follows authenticated nickname, live SSE, reconnect and swapped colors without changing normal Gomoku', async t => {
+test('nicknames never expose fog stones across rename, live SSE, reconnect or swapped colors', async t => {
   const {server}=createGameServer({scoreFile:null});server.listen(0,'127.0.0.1');await once(server,'listening');
   const base=`http://127.0.0.1:${server.address().port}`,controllers=[];
   t.after(async()=>{controllers.forEach(c=>c.abort());server.closeAllConnections();await new Promise(r=>server.close(r));});
@@ -257,21 +236,20 @@ test('named visibility follows authenticated nickname, live SSE, reconnect and s
   const sync=p=>api('sync',{room:a.code},p.token);
   const call=async(action,p,data={})=>api(action,{room:a.code,version:(await sync(p)).version,...data},p.token);
   await call('move',a,{x:7,y:7});
-  const seen=await sb.wait(s=>s.game.moves.length===1);assert.equal(seen.game.board[112],1);assert.equal(seen.game.board[111],null);
-  assert.equal((await call('move',b,{x:7,y:7})).http,400);assert.equal((await sync(b)).game.retryUsed,false);
+  const seen=await sb.wait(s=>s.game.moves.length===1);assert.equal(seen.game.board[112],null);assert.equal(seen.game.board[111],null);
+  assert.equal((await call('move',b,{x:7,y:7})).http,200);assert.equal((await sync(b)).game.retryUsed,true);
   await call('move',b,{x:0,y:0});assert.equal((await sync(a)).game.board[0],null);
-  const reconnected=await connect(b);assert.equal((await reconnected.wait(s=>s.game.moves.length===2)).game.board[112],1);
+  const reconnected=await connect(b);assert.equal((await reconnected.wait(s=>s.game.moves.length===2)).game.board[112],null);
   const version=(await sync(a)).version;
   await api('profile',{name:'雾中玩家'},null,named.token);
-  const renamed=await sb.wait(s=>s.version>version);assert.equal(renamed.game.board[112],null);
-  assert.equal((await call('move',a,{x:8,y:7,version})).http,400,'nickname visibility changes invalidate stale actions');
+  const renamed=await sb.wait(s=>s.players[0].name==='雾中玩家');assert.equal(renamed.version,version);assert.equal(renamed.game.board[112],null);
   await api('profile',{name:'芽卫兵123'},null,named.token);
-  await sb.wait(s=>s.version>renamed.version && s.game.board[112]===1);
+  await sb.wait(s=>s.players[0].name==='芽卫兵123' && s.game.board[112]===null);
   await call('move',a,{x:10,y:7,publicColors:[2]});assert.equal((await sync(a)).game.board[0],null,'client cannot grant itself extra vision');
-  assert.equal((await sync(b)).game.board[115],1);
+  assert.equal((await sync(b)).game.board[115],null);
   await call('resign',b);await call('rematch',a);await call('rematch',b);
   assert.equal((await sync(a)).yourColor,2);assert.ok((await sync(b)).game.board.every(p=>p===null));
   await call('move',b,{x:0,y:0});await call('move',a,{x:14,y:14});
-  assert.equal((await sync(b)).game.board[224],2);assert.equal((await sync(a)).game.board[0],null);
+  assert.equal((await sync(b)).game.board[224],null);assert.equal((await sync(a)).game.board[0],null);
   const normal=await api('create',{mode:'standard'},null,named.token);assert.ok(normal.game.board.every(p=>p===0));
 });

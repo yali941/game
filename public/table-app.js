@@ -59,7 +59,7 @@ function connect() {
 function enter(value) { session = { room: value.code, token: value.token }; persist(); apply(value); history.replaceState(null, '', `/play?game=${kind}&room=${value.code}`); connect(); }
 function clearRoom() { stream?.close(); stream = null; room = null; session = null; transport = false; selected = null; persist(); history.replaceState(null, '', `/play?game=${kind}`); $('table-effects').replaceChildren(); }
 function localDice() { const bytes = new Uint32Array(1); let value; do { crypto.getRandomValues(bytes); value = bytes[0]; } while (value >= 4294967292); return value % 6 + 1; }
-const rollOutcome = entry => (entry.luck === 'unlucky' ? '霉运加权 · ' : '') + (entry.outcome === 'penalty' ? '连续三个 6，返回机库' : entry.outcome === 'no-move' ? '无可移动飞机，换人' : '可移动飞机');
+const rollOutcome = entry => (entry.outcome === 'penalty' ? '连续三个 6，返回机库' : entry.outcome === 'no-move' ? '无可移动飞机，换人' : '可移动飞机');
 const rollPlayer = n => `${playerName(n)}${mode !== 'local' && room?.players[n - 1]?.name ? ` · ${room.players[n - 1].name}` : ''}`;
 function renderRollHistory() {
   const g = game(), entries = g.rollHistory || [], list = $('roll-history-list');
@@ -83,7 +83,6 @@ function renderRollHistory() {
 function rollHistoryText() {
   const g = game(), entries = g.rollHistory || [];
   const lines = ['一局 · 飞行棋掷骰记录', mode !== 'local' ? `房间 ${room.code} · 第 ${room.round} 局 · 联机` : '同屏对弈', `本局共 ${g.rolls} 次，以下为最近 ${entries.length} 次（按时间先后）`, ''];
-  if (mode !== 'local' && room?.dicePolicy) lines.push(`芽卫兵倒霉模式：昵称「${room.dicePolicy.name}」；1～6 点概率依次为 ${room.dicePolicy.weights.join('%、')}%。`, '');
   for (let n = 1; n <= g.count; n++) {
     const own = entries.filter(entry => entry.player === n);
     lines.push(`${rollPlayer(n)}：${own.map(entry => entry.dice).join('、') || '尚无记录'}`);
@@ -407,7 +406,6 @@ function render() {
   const local = mode === 'local', g = game(), isSeated = seated(), count = g.count || 2;
   $('online-tab').classList.toggle('selected', mode === 'online'); $('local-tab').classList.toggle('selected', local); $('online-tab').setAttribute('aria-pressed', mode === 'online'); $('local-tab').setAttribute('aria-pressed', local);
   $('ai-tab').hidden = kind !== 'flight'; $('ai-tab').classList.toggle('selected', mode === 'ai'); $('ai-tab').setAttribute('aria-pressed', mode === 'ai'); $('ai-tab').disabled = pending;
-  if (kind === 'flight') { $('dice-mode').closest('label').hidden = mode === 'ai'; $('dice-mode-help').hidden = mode === 'ai' || $('dice-mode').value !== 'unlucky'; }
   $('create-button').textContent = mode === 'ai' ? '创建人机房间 ↗' : '创建房间 ↗';
   $('online-tab').disabled = pending; $('local-tab').disabled = pending;
   $('lobby').hidden = isSeated; $('room-panel').hidden = local || !room;
@@ -458,9 +456,7 @@ function render() {
   $('create-button').disabled = pending; $('join-button').disabled = pending; $('copy-button').disabled = Boolean(room?.closed); renderBoard();
   syncTabletop({ kind, dice: g.dice, phase: g.phase, active: !$('flight-controls').hidden, moving: Boolean(flightMotion), pending });
   if(kind==='flight') {
-    const policy = !local && room?.dicePolicy;
-    const notice = $('dice-policy'); notice.hidden = !policy;
-    notice.textContent = policy ? `芽卫兵倒霉模式 · ${policy.name}${policy.seats.length ? '' : '（尚未匹配到玩家）'}\n1～6 点概率：${policy.weights.join('% / ')}%。其他玩家正常随机，娱乐局不计胜场。` : '';
+    const notice = $('dice-policy'); notice.hidden = true; notice.textContent = '';
     renderRollHistory();
     const lastRoll = g.rollHistory?.at(-1);
     if (lastRoll && !isDiceRolling()) $('dice-outcome').textContent = `${rollPlayer(lastRoll.player)}掷出 ${lastRoll.dice} 点`;
@@ -485,14 +481,6 @@ $('game-title').textContent = kind === 'flight' ? '下一站，好运。' : '大
 $('game-eyebrow').textContent = kind === 'flight' ? 'FLY TOGETHER. COME HOME FIRST.' : 'A LITTLE WILD. A GOOD STRATEGY.';
 $('game-subtitle').textContent = kind === 'flight' ? '传统飞行棋 · 2～4 人 · 让四架飞机平安归航。' : '传统斗兽棋 · 双人对弈 · 越过小河，走进对方兽穴。';
 $('count-field').hidden = kind !== 'flight'; $('rules-title').textContent = `${title}，这样玩。`;
-if (kind === 'flight') {
-  const field = document.createElement('label'); field.className = 'field-label'; field.htmlFor = 'dice-mode';
-  field.innerHTML = '房间玩法<select id="dice-mode"><option value="fair">标准模式 · 公平随机</option><option value="unlucky">芽卫兵倒霉模式</option></select>';
-  const help = document.createElement('p'); help.id = 'dice-mode-help'; help.className = 'small-note'; help.hidden = true;
-  help.textContent = '仅昵称完全匹配「芽卫兵」的玩家更难出仓和续掷。其他人正常随机，娱乐局不计胜场。';
-  $('count-field').after(field, help);
-  $('dice-mode').onchange = () => { help.hidden = $('dice-mode').value !== 'unlucky'; };
-}
 const rules = kind === 'flight' ? [
   '人机模式：可先邀请朋友入座，房主点击开始后 AI 补齐所选人数的空位。AI 与真人使用相同规则和公平骰子；人机局不计胜场，再来一局只需真人确认。',
   '2～4 人，每方 4 架飞机。红方先手，之后顺时针轮流。掷出 2、4、6 点，可选一架机库内的飞机出仓到起飞区，或让在途飞机按点数前进；2、4 点行动后换人。',
@@ -513,7 +501,7 @@ const ol = document.createElement('ol'); for (const text of rules) { const li = 
 const note = document.createElement('p'); note.textContent = '仍在比赛且未托管的玩家需保持在线；断线暂停、刷新原页面恢复。已归航玩家断线不影响其他人。行棋没有时间限制，可随时开启或取消托管。结束后全员确认再来一局，轮换先手。主动离开将关闭整间棋室；2 人对局判对方胜，3～4 人中途散局不计胜场。'; $('rules-content').append(note);
 $('rules-button').onclick = () => $('rules-dialog').showModal(); document.querySelectorAll('.dialog-close').forEach(b => b.onclick = () => b.closest('dialog').close());
 $('confirm-cancel').onclick = () => $('confirm-dialog').close(); $('confirm-ok').onclick = () => { $('confirm-dialog').close(); const fn = confirmAction; confirmAction = null; fn?.(); };
-$('create-button').onclick = () => action(async () => { await profileReady; enter(await api('create', { count: Number($('player-count').value), roomMode: mode === 'ai' ? 'ai' : 'friends', diceMode: kind === 'flight' && mode !== 'ai' ? $('dice-mode').value : 'fair' })); });
+$('create-button').onclick = () => action(async () => { await profileReady; enter(await api('create', { count: Number($('player-count').value), roomMode: mode === 'ai' ? 'ai' : 'friends', diceMode: 'fair' })); });
 $('join-form').onsubmit = e => { e.preventDefault(); action(async () => { await profileReady; enter(await api('join', { room: $('room-input').value.trim().toUpperCase() })); }); };
 $('room-input').oninput = () => $('room-input').value = $('room-input').value.replace(/[^a-zA-Z2-9]/g, '').toUpperCase();
 $('start-button').onclick = () => action(async () => apply(await api('start')));

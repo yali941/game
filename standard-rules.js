@@ -1,8 +1,6 @@
 import * as base from './public/game.js';
 
 // Online standard Gomoku only. Local/AI and fog keep their own turn rules.
-const bonusKeywords = ['芽卫兵', '小郭', '起义', '造反', '大王', '9261', '2202'];
-export const bonusColors = players => players.filter(p => bonusKeywords.some(word => p?.name?.includes(word))).map(p => 3-p.color);
 export const newGame = () => ({...base.newGame(), bonus:null, pendingTurn:null});
 
 // Draft coordinates and results never leave the server in an opponent snapshot.

@@ -31,12 +31,12 @@ export function createGameServer(options = {}) {
   const tables = createTableService({ ...options, records, owner });
   const rules=r=>r.game.kind==='go'?goRules:r.game.kind==='fog'?fogRules:standardRules;
   const connected = p => Boolean(p && !p.gone && p.streams.size);
-  const snapshot = (room, player) => ({ code: room.code, yourColor: player?.color, game: room.game.kind==='go'?goRules.goSnapshot(room.game):room.game.kind==='fog'?fogRules.fogSnapshot(room.game,player?.color,Date.now(),fogRules.publicStoneColors(room.players)):standardRules.standardSnapshot(room.game,player?.color), version:room.version||0, seq:room.seq||0, round: room.round, closed: room.closed, ready: room.ready, request: room.request ? {...room.request, moveCount: !room.game.kind && room.game.pendingTurn?.color !== player?.color ? room.game.pendingTurn?.start ?? room.request.moveCount : room.request.moveCount} : null, notice: room.notice, chat:room.chat||[], players: room.players.map(p => p ? { ...publicPlayer(p), color: p.color, connected: connected(p), gone: p.gone } : null) });
+  const snapshot = (room, player) => ({ code: room.code, yourColor: player?.color, game: room.game.kind==='go'?goRules.goSnapshot(room.game):room.game.kind==='fog'?fogRules.fogSnapshot(room.game,player?.color,Date.now()):standardRules.standardSnapshot(room.game,player?.color), version:room.version||0, seq:room.seq||0, round: room.round, closed: room.closed, ready: room.ready, request: room.request ? {...room.request, moveCount: !room.game.kind && room.game.pendingTurn?.color !== player?.color ? room.game.pendingTurn?.start ?? room.request.moveCount : room.request.moveCount} : null, notice: room.notice, chat:room.chat||[], players: room.players.map(p => p ? { ...publicPlayer(p), color: p.color, connected: connected(p), gone: p.gone } : null) });
   const availablePlayer = p => Boolean(p && !p.gone && (connected(p)||p.auto));
   const auto = createAutoScheduler({delay:options.autoDelay,ready:r=>r.game.kind!=='fog' && !r.closed && !r.request && r.game.status==='playing' && (r.game.kind!=='go'||r.game.phase==='play') && r.players.every(availablePlayer),execute:(r,p,m)=>{
     if(!r.game.kind && r.game.bonus) standardRules.chooseBonus(r.game,p.color,false);
     else if(m.action==='pass')goRules.pass(r.game,p.color);
-    else if(!r.game.kind) { standardRules.playMove(r.game,p.color,m.x,m.y,standardRules.bonusColors(r.players)); if(r.game.bonus)standardRules.chooseBonus(r.game,p.color,false); }
+    else if(!r.game.kind) { standardRules.playMove(r.game,p.color,m.x,m.y); if(r.game.bonus)standardRules.chooseBonus(r.game,p.color,false); }
     else rules(r).playMove(r.game,p.color,m.x,m.y);
     r.version=(r.version||0)+1;
   },broadcast});
@@ -143,10 +143,7 @@ export function createGameServer(options = {}) {
       if (url.pathname === '/api/profile') {
         const profile=records.profile(req,data);
         for(const room of rooms.values()) {
-          const before = room.game.kind==='fog' ? fogRules.publicStoneColors(room.players).join(',') : !room.game.kind ? standardRules.bonusColors(room.players).join(',') : '';
           if(updateRoomProfile(room,profile)) {
-            const after = room.game.kind==='fog' ? fogRules.publicStoneColors(room.players).join(',') : !room.game.kind ? standardRules.bonusColors(room.players).join(',') : '';
-            if(before!==after) room.version=(room.version||0)+1;
             broadcast(room);
           }
         }
@@ -206,7 +203,7 @@ export function createGameServer(options = {}) {
         return json(res, 200, { ok: true });
       }
       if((isGo || room.game.kind==='fog') && ['/api/move','/api/scout','/api/taunt','/api/pass','/api/dead','/api/confirm-score','/api/resume','/api/request','/api/respond','/api/resign'].includes(url.pathname) && data.version!==room.version)throw new Error('棋局已更新，请根据当前棋盘操作');
-      if(!room.game.kind && (room.game.bonus || standardRules.bonusColors(room.players).length || data.version!==undefined || url.pathname==='/api/bonus') && ['/api/move','/api/bonus','/api/request','/api/respond','/api/resign'].includes(url.pathname) && data.version!==room.version) throw new Error('棋局已更新，请根据当前棋盘操作');
+      if(!room.game.kind && (room.game.bonus || data.version!==undefined || url.pathname==='/api/bonus') && ['/api/move','/api/bonus','/api/request','/api/respond','/api/resign'].includes(url.pathname) && data.version!==room.version) throw new Error('棋局已更新，请根据当前棋盘操作');
       if(!room.game.kind && url.pathname==='/api/bonus') {
         if(player.auto)throw new Error('请先取消托管');
         if(room.request)throw new Error('请先处理悔棋或求和请求');
@@ -246,9 +243,9 @@ export function createGameServer(options = {}) {
       } else if (url.pathname === '/api/move') {
         if(player.auto) throw new Error('请先取消托管再手动落子');
         if (room.request) throw new Error('请先处理悔棋或求和请求');
-        if(room.game.kind==='fog') fogRules.playMove(room.game,player.color,data.x,data.y,now,fogRules.publicStoneColors(room.players));
+        if(room.game.kind==='fog') fogRules.playMove(room.game,player.color,data.x,data.y,now);
         else if(!room.game.kind) {
-          const eligible=standardRules.bonusColors(room.players);
+          const eligible=[];
           if(owner.peek(req,player,room,'extra')) eligible.push(player.color);
           standardRules.playMove(room.game,player.color,data.x,data.y,eligible);owner.clear(req,player,room);
         }

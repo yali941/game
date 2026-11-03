@@ -1,12 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {once} from 'node:events';
+import {randomBytes,createHash} from 'node:crypto';
 import * as rules from '../standard-rules.js';
 import {createGameServer} from '../server.js';
 
 test('optional extra move requires a choice and explicit end after at most two stones',()=>{
-  for (const word of ['芽卫兵','小郭','起义','造反','大王','9261','2202']) for (const color of [1,2]) {
-    const eligible=rules.bonusColors([{name:`我是${word}123`,color},null,{}]);
+  for (const color of [1,2]) {
+    const eligible=[3-color];
     assert.deepEqual(eligible,[3-color]);
     const game=rules.newGame();game.turn=3-color;
     rules.playMove(game,3-color,7,7,eligible);assert.equal(game.bonus,'choice');
@@ -19,12 +20,6 @@ test('optional extra move requires a choice and explicit end after at most two s
     rules.playMove(skipped,3-color,7,7,eligible);rules.chooseBonus(skipped,3-color,false);
     assert.equal(skipped.turn,color);assert.equal(skipped.moves.length,1);assert.equal(skipped.bonus,null);
   }
-  assert.deepEqual(rules.bonusColors([{name:'小郭起义造反芽卫兵大王92612202',color:2}]),[1],'multiple matches still grant one extra');
-  assert.deepEqual(rules.bonusColors([{name:'大 王926220',color:2}]),[],'partial keywords do not match');
-  assert.deepEqual(rules.bonusColors([{name:'小 郭起 义造 反',color:2}]),[]);
-  assert.deepEqual(rules.bonusColors([{name:'小芽卫兵123',color:2},null]),[1]);
-  assert.deepEqual(rules.bonusColors([{name:'芽卫',color:2},{name:'普通',color:1}]),[]);
-  assert.deepEqual(rules.bonusColors([{name:'芽卫兵',color:1},{name:'芽卫兵2',color:2}]),[2,1]);
   const g=rules.newGame();assert.throws(()=>rules.chooseBonus(g,1,true),/没有/);
   rules.playMove(g,1,7,7,[1]);assert.equal(g.turn,1);assert.equal(g.bonus,'choice');
   assert.throws(()=>rules.playMove(g,1,8,7,[1]),/先选择/);
@@ -65,12 +60,13 @@ test('winning stones wait for explicit end; resign and draw discard unpublished 
 });
 
 async function fixture(t,options={}) {
-  const {server,rooms}=createGameServer({scoreFile:null,...options});server.listen(0,'127.0.0.1');await once(server,'listening');
+  const key=randomBytes(32).toString('base64url'),ownerKeyHash=createHash('sha256').update(key).digest('hex'),cookies=new Map();
+  const {server,rooms}=createGameServer({scoreFile:null,ownerKeyHash,ownerSecureCookie:false,...options});server.listen(0,'127.0.0.1');await once(server,'listening');
   const base=`http://127.0.0.1:${server.address().port}`,controllers=[];
   t.after(async()=>{controllers.forEach(c=>c.abort());server.closeAllConnections();await new Promise(r=>server.close(r));});
   async function api(action,data={},player,profile) {
-    const response=await fetch(`${base}/api/${action}`,{method:'POST',headers:{'Content-Type':'application/json',...(player?{Authorization:`Bearer ${player.token}`} : {}),...(profile?{'X-Player-Token':profile}: {})},body:JSON.stringify(data)});
-    return {http:response.status,...await response.json()};
+    const response=await fetch(`${base}/api/${action}`,{method:'POST',headers:{'Content-Type':'application/json',...(cookies.has(player?.token)?{Cookie:cookies.get(player.token)}:{}),...(player?{Authorization:`Bearer ${player.token}`} : {}),...(profile?{'X-Player-Token':profile}: {})},body:JSON.stringify(data)});
+    return {http:response.status,cookie:response.headers.get('set-cookie')?.split(';')[0],...await response.json()};
   }
   async function connect(p){
     const c=new AbortController();controllers.push(c);const response=await fetch(`${base}/api/events?room=${p.code}&token=${p.token}`,{signal:c.signal});assert.equal(response.status,200);
@@ -80,11 +76,15 @@ async function fixture(t,options={}) {
   }
   const sync=p=>api('sync',{room:p.code},p);
   const call=async(action,p,data={})=>api(action,{room:p.code,version:(await sync(p)).version,...data},p);
-  return {api,connect,sync,call,rooms,base};
+  async function arm(p,profile) {
+    const login=await api('owner/login',{key},null,profile.token);assert.equal(login.http,200);cookies.set(p.token,login.cookie);
+    const result=await api('owner/action',{game:'gomoku',room:p.code,version:(await sync(p)).version,op:'extra',enabled:true},p,profile.token);assert.equal(result.http,200);
+  }
+  return {api,connect,sync,call,rooms,base,arm};
 }
 
 test('draft snapshots hide stones, counters and results until end, including SSE reload and a winning move',async t=>{
-  const {api,connect,sync,call,rooms,base}=await fixture(t);
+  const {api,connect,sync,call,rooms,base,arm}=await fixture(t);
   const pa=await api('profile',{name:'公开测试'}),pb=await api('profile',{name:'测试2202'});
   const a=await api('create',{},null,pa.token),b=await api('join',{room:a.code},null,pb.token);
   const sa=await connect(a);await connect(b);await sa.wait(s=>s.players.every(p=>p?.connected));
@@ -94,7 +94,7 @@ test('draft snapshots hide stones, counters and results until end, including SSE
     assert.equal(s.game.winner,0);assert.deepEqual(s.game.line,[]);assert.equal(s.game.status,'playing');
     return s;
   };
-  await call('move',a,{x:7,y:7});assert.equal((await hidden(0)).game.board[112],0);
+  await arm(a,pa);await call('move',a,{x:7,y:7});assert.equal((await hidden(0)).game.board[112],0);
   const draw=await call('request',a,{kind:'draw'});assert.equal((await sync(b)).request.moveCount,0);
   await call('respond',b,{id:draw.request.id,accept:false});
   const end=await call('bonus',a,{take:false});assert.equal(end.game.turn,2);assert.equal((await sync(b)).game.moves.length,1);
@@ -104,7 +104,7 @@ test('draft snapshots hide stones, counters and results until end, including SSE
   // A legal position one stone away from a win, with published stones only.
   for(let x=1;x<=4;x++){g.board[2*15+x]=1;g.moves.push({x,y:2,color:1});}
   const publishedCount=g.moves.length;
-  await call('move',a,{x:5,y:2});const own=await sync(a);
+  await arm(a,pa);await call('move',a,{x:5,y:2});const own=await sync(a);
   assert.equal(own.game.bonus,'confirm');assert.equal(own.game.board[35],1);
   assert.equal((await hidden(publishedCount)).game.board[35],0);
   const reconnect=await connect(b);await reconnect.wait(s=>s.version===own.version && s.game.board[35]===0);
@@ -125,11 +125,11 @@ test('ordinary moves publish immediately and snapshots never mutate the authorit
 });
 
 test('online choice is authenticated, synchronized, reconnectable and versioned; undo, rematch, rename and modes stay consistent',async t=>{
-  const {api,connect,sync,call,base}=await fixture(t);
+  const {api,connect,sync,call,base,arm}=await fixture(t);
   const pa=await api('profile',{name:'普通棋友'}),pb=await api('profile',{name:'小郭123'});
   const a=await api('create',{},null,pa.token),b=await api('join',{room:a.code},null,pb.token);
   const sa=await connect(a),sb=await connect(b);await sa.wait(s=>s.players.every(p=>p?.connected));
-  const first=await call('move',a,{x:7,y:7});assert.equal(first.http,200);assert.equal(first.game.bonus,'choice');
+  await arm(a,pa);const first=await call('move',a,{x:7,y:7});assert.equal(first.http,200);assert.equal(first.game.bonus,'choice');
   const hiddenFirst=await sb.wait(s=>s.version===first.version);assert.equal(hiddenFirst.game.bonus,null);assert.equal(hiddenFirst.game.moves.length,0);assert.equal(hiddenFirst.game.board[112],0);assert.equal(hiddenFirst.game.pendingTurn,undefined);
   assert.equal((await call('bonus',b,{take:true})).http,400);
   assert.equal((await call('move',a,{x:8,y:7})).http,400);
@@ -154,7 +154,7 @@ test('online choice is authenticated, synchronized, reconnectable and versioned;
   request=(await call('request',a,{kind:'undo'})).request;const undo=await call('respond',b,{id:request.id,accept:true});
   assert.equal(undo.game.moves.length,1);assert.equal(undo.game.bonus,null);assert.equal((await sync(a)).game.bonus,'placing');
   await call('bonus',a,{take:false});assert.equal((await sync(a)).game.turn,2);
-  await call('move',b,{x:0,y:0});await call('move',a,{x:9,y:7});
+  await call('move',b,{x:0,y:0});await arm(a,pa);await call('move',a,{x:9,y:7});
   await api('profile',{name:'普通对手'},null,pb.token);
   assert.equal((await sync(a)).game.bonus,'choice','earned opportunity survives nickname change');
   await call('bonus',a,{take:false});await call('move',b,{x:1,y:0});
@@ -162,7 +162,7 @@ test('online choice is authenticated, synchronized, reconnectable and versioned;
   await api('profile',{name:'起义大王'},null,pb.token);
   await call('resign',b);await call('rematch',a);const rematch=await call('rematch',b);
   assert.equal(rematch.yourColor,1);assert.equal(rematch.game.bonus,null);
-  await call('move',b,{x:0,y:0});const white=await call('move',a,{x:7,y:7});assert.equal(white.game.turn,2);assert.equal(white.game.bonus,'choice');
+  await call('move',b,{x:0,y:0});await arm(a,pa);const white=await call('move',a,{x:7,y:7});assert.equal(white.game.turn,2);assert.equal(white.game.bonus,'choice');
   assert.equal((await fetch(`${base}/standard-rules.js`)).status,404);
   const fogA=await api('create',{mode:'fog'},null,pa.token),fogB=await api('join',{room:fogA.code},null,pb.token);
   const fs=await connect(fogA);await connect(fogB);await fs.wait(s=>s.players.every(p=>p?.connected));
@@ -171,11 +171,29 @@ test('online choice is authenticated, synchronized, reconnectable and versioned;
 });
 
 test('autoplay commits its own moves but cannot reveal a manually pending turn',async t=>{
-  const {api,connect,call}=await fixture(t,{autoDelay:10});
+  const {api,connect,call,arm}=await fixture(t,{autoDelay:10});
   const named=await api('profile',{name:'我要造反'});
-  const a=await api('create'),b=await api('join',{room:a.code},null,named.token);
+  const pa=await api('profile',{name:'托管测试'});
+  const a=await api('create',{},null,pa.token),b=await api('join',{room:a.code},null,named.token);
   const sa=await connect(a);await connect(b);await sa.wait(s=>s.players.every(p=>p?.connected));
   await call('auto',a,{enabled:true});const autoFirst=await sa.wait(s=>s.game.moves.length===1);assert.equal(autoFirst.game.turn,2);assert.equal(autoFirst.game.bonus,null);
-  await call('auto',a,{enabled:false});await call('move',b,{x:0,y:0});await call('move',a,{x:14,y:14});
+  await call('auto',a,{enabled:false});await call('move',b,{x:0,y:0});await arm(a,pa);await call('move',a,{x:14,y:14});
   assert.equal((await call('auto',a,{enabled:true})).http,400);await call('bonus',a,{take:false});const skipped=await sa.wait(s=>s.game.moves.length===3 && s.game.turn===2);assert.equal(skipped.game.bonus,null);
+});
+
+ test('former nickname keywords never grant extra turns, including renamed players and forged payloads',async t=>{
+  const {api,connect,call,sync}=await fixture(t);
+  const pa=await api('profile',{name:'普通'}),pb=await api('profile',{name:'芽卫兵'});
+  const a=await api('create',{},null,pa.token),b=await api('join',{room:a.code},null,pb.token);
+  const sa=await connect(a);await connect(b);await sa.wait(s=>s.players.every(p=>p?.connected));
+  let i=0;
+  for(const word of ['芽卫兵','小郭','起义','造反','大王','9261','2202']) {
+    await api('profile',{name:'我是'+word+'123'},null,pb.token);
+    const before=(await sync(a)).version;
+    await api('profile',{name:word},null,pa.token);assert.equal((await sync(a)).version,before);
+    const x=(i*2)%15,y=Math.floor(i*2/15)*3;
+    let s=await call('move',a,{x,y,bonus:true,eligible:[1]});assert.equal(s.http,200);assert.equal(s.game.turn,2);assert.equal(s.game.bonus,null);
+    assert.equal((await sync(b)).game.board[y*15+x],1);
+    s=await call('move',b,{x,y:14-y});assert.equal(s.http,200);assert.equal(s.game.turn,1);assert.equal(s.game.bonus,null);i++;
+  }
 });

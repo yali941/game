@@ -4,24 +4,9 @@ import { newUno, unoSnapshot, actUno, tickUno } from './public/uno-rules.js';
 import {newOldMaid,waitingOldMaid,oldMaidSnapshot,actOldMaid,oldMaidTarget} from './public/oldmaid-rules.js';
 import { identifyPlayer, publicPlayer, updateRoomProfile, addChat, setAuto, createAutoScheduler } from './room-tools.js';
 
-export const UNLUCKY_WEIGHTS = Object.freeze([35, 10, 25, 10, 15, 5]);
-export function unluckyDice(ticket) {
-  if (!Number.isInteger(ticket) || ticket < 0 || ticket >= 100) throw new Error('Invalid dice ticket');
-  let boundary = 0;
-  for (let i = 0; i < UNLUCKY_WEIGHTS.length; i++) {
-    boundary += UNLUCKY_WEIGHTS[i];
-    if (ticket < boundary) return i + 1;
-  }
-}
-
-export function createTableService({ owner, roll = () => randomInt(1, 7), records, autoDelay, unluckyName = '芽卫兵', luckTicket = () => randomInt(100) } = {}) {
-  const targetName = unluckyName.trim();
-  const affected = p => Boolean(targetName && p?.name === targetName);
-  const dicePolicy = r => r.kind === 'flight' && r.diceMode === 'unlucky' ? { mode: 'unlucky', name: targetName, weights: UNLUCKY_WEIGHTS, seats: r.players.filter(p => p && !p.gone && affected(p)).map(p => p.seat) } : null;
+export function createTableService({ owner, roll = () => randomInt(1, 7), records, autoDelay } = {}) {
   const throwDice = (r, p, forced) => {
-    const unlucky = r.diceMode === 'unlucky' && affected(p);
-    rollFlight(r.game, p.seat, forced || (unlucky ? unluckyDice(luckTicket()) : roll()));
-    if (unlucky && !forced) r.game.rollHistory.at(-1).luck = 'unlucky';
+    rollFlight(r.game, p.seat, forced || roll());
   };
   const rooms = new Map();
   const waitingUno=count=>({kind:'uno',count,hands:Array.from({length:count},()=>[]),deck:[],top:null,turn:0,direction:1,color:'',phase:'waiting',pending:null,bombs:[],status:'waiting',winner:0,moves:[],last:null,message:'至少两人入座即可开始，最多 8 人，开局前可继续邀请朋友。'});
@@ -29,13 +14,13 @@ export function createTableService({ owner, roll = () => randomInt(1, 7), record
   const waiting=(kind,count)=>kind==='oldmaid'?waitingOldMaid(count):waitingUno(count);
   const makeGame=(kind,count,first=1)=>kind==='oldmaid'?newOldMaid(count,randomInt,first):kind==='uno'?newUno(count,randomInt,first):newTableGame(kind,count);
   const connected = p => Boolean(p && !p.gone && p.streams.size);
-  const snapshot = (r, p) => ({ code: r.code, kind: r.kind, roomMode: r.roomMode || 'friends', count: r.count, yourSeat: p.seat, host: 1, game: r.kind==='oldmaid'?oldMaidSnapshot(r.game,p.seat):r.kind==='uno'?unoSnapshot(r.game,p.seat):r.game, dicePolicy: dicePolicy(r), started: r.started, closed: r.closed, ready: r.ready, round: r.round, version: r.version, seq: r.seq, chat:r.chat||[], players: r.players.map(p => p ? { ...publicPlayer(p), bot: Boolean(p.bot), seat: p.seat, connected: connected(p), gone: p.gone } : null) });
+  const snapshot = (r, p) => ({ code: r.code, kind: r.kind, roomMode: r.roomMode || 'friends', count: r.count, yourSeat: p.seat, host: 1, game: r.kind==='oldmaid'?oldMaidSnapshot(r.game,p.seat):r.kind==='uno'?unoSnapshot(r.game,p.seat):r.game, started: r.started, closed: r.closed, ready: r.ready, round: r.round, version: r.version, seq: r.seq, chat:r.chat||[], players: r.players.map(p => p ? { ...publicPlayer(p), bot: Boolean(p.bot), seat: p.seat, connected: connected(p), gone: p.gone } : null) });
   const availablePlayer=p=>Boolean(p && !p.gone && (connected(p)||p.auto||p.bot));
   const finishedSeat=(r,p)=>Boolean(p && r.game.finishOrder?.includes(p.seat));
   const readyPlayers=r=>r.players.every(p=>availablePlayer(p) || (r.game.status==='playing' && finishedSeat(r,p)));
   const broadcast = r => {
     for(const p of r.players) if(finishedSeat(r,p)) p.auto=false;
-    if (r.diceMode !== 'unlucky' && r.roomMode !== 'ai') records?.victory(r, r.kind, p => p.seat);
+    if (r.roomMode !== 'ai') records?.victory(r, r.kind, p => p.seat);
     r.updatedAt = Date.now(); r.seq++;
     for (const p of r.players) if (p) for (const s of p.streams) s.write(`data: ${JSON.stringify(snapshot(r, p))}\n\n`);
     auto.sync(r);
@@ -78,7 +63,7 @@ export function createTableService({ owner, roll = () => randomInt(1, 7), record
       const diceMode = data.diceMode ?? 'fair';
       const roomMode = data.roomMode ?? 'friends';
       if (!['friends', 'ai'].includes(roomMode) || (roomMode === 'ai' && (data.kind !== 'flight' || diceMode !== 'fair'))) throw new Error('请选择有效的人机模式');
-      if (!['fair', 'unlucky'].includes(diceMode) || (data.kind !== 'flight' && diceMode !== 'fair')) throw new Error('请选择有效的飞行棋模式');
+      if (diceMode !== 'fair') throw new Error('请选择有效的飞行棋模式');
       const count = cardGame(data.kind) ? 1 : data.kind === 'jungle' ? 2 : data.count ?? 2;
       if (!cardGame(data.kind) && ![2, 3, 4].includes(count)) throw new Error('请选择 2～4 人');
       if (rooms.size >= 500) throw new Error('棋室暂时已满');
